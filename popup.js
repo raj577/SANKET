@@ -55,6 +55,50 @@ document.getElementById("scanTodayBtn").addEventListener("click", () => startSca
 document.getElementById("scanBtn").addEventListener("click", () => startScan(false));
 document.getElementById("scanWatchlistBtn").addEventListener("click", () => startScan(true));
 
+// ===== Load expiry series from Sensibull =====
+document.getElementById("loadExpiries").addEventListener("click", loadExpirySeries);
+
+async function loadExpirySeries() {
+    const btn = document.getElementById("loadExpiries");
+    const select = document.getElementById("expirySeries");
+    const underlying = (document.getElementById("expiryRefSymbol").value || "NIFTY").trim().toUpperCase();
+
+    btn.textContent = "⏳";
+    try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        const response = await chrome.tabs.sendMessage(tab.id, { action: "getExpiries", underlying });
+
+        if (response && response.success && response.expiries && response.expiries.length > 0) {
+            const current = select.value;
+            select.innerHTML = '<option value="">Nearest (default)</option>' +
+                response.expiries.map(e => {
+                    const type = e.isWeekly ? "Weekly" : "Monthly";
+                    const label = formatExpiryLabel(e.date);
+                    return `<option value="${e.date}">${label} (${type})</option>`;
+                }).join("");
+            // Try to keep previous selection
+            if (current) select.value = current;
+            btn.textContent = "✅";
+        } else {
+            btn.textContent = "❌";
+            console.warn("No expiries returned", response);
+        }
+    } catch (e) {
+        console.error(e);
+        btn.textContent = "❌";
+    }
+    setTimeout(() => { btn.textContent = "🔄"; }, 1500);
+}
+
+function formatExpiryLabel(dateStr) {
+    const d = new Date(dateStr);
+    if (isNaN(d)) return dateStr;
+    const day = String(d.getDate()).padStart(2, "0");
+    const month = d.toLocaleString("en-US", { month: "short" });
+    const year = d.getFullYear();
+    return `${day} ${month} ${year}`;
+}
+
 async function startScan(watchlistOnly, todayOnly = false) {
     const status = document.getElementById("status");
     const scanBtn = document.getElementById("scanBtn");
@@ -69,7 +113,7 @@ async function startScan(watchlistOnly, todayOnly = false) {
     const fromDate = todayOnly ? null : (document.getElementById("fromDate").value || null);
     const toDate = todayOnly ? null : (document.getElementById("toDate").value || null);
     const mode = todayOnly ? "intraday" : document.getElementById("mode").value;
-    const expiry = document.getElementById("expiry").value || null;
+    const expiry = document.getElementById("expirySeries").value || null;
 
     // Scan tuning options
     const delayMs = parseInt(document.getElementById("delayMs").value) || 1000;
@@ -517,3 +561,5 @@ async function sendTelegramSummary(results) {
 // ========== INIT ==========
 loadWatchlistUI();
 refreshActiveWatchlistDropdown();
+// Try to auto-load expiry series (silently fails if no Sensibull tab)
+loadExpirySeries().catch(() => {});

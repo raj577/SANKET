@@ -58,7 +58,7 @@ button.danger:hover { background: #f44336; }
 
 <div class="header">
     <h2>🔍 Sensibull OI Scanner</h2>
-    <span id="version" style="font-size:11px;color:#78909c">v2.1</span>
+    <span id="version" style="font-size:11px;color:#78909c">v2.2</span>
 </div>
 
 <div class="tabs">
@@ -90,9 +90,20 @@ button.danger:hover { background: #f44336; }
                 <option value="interday">Interday</option>
             </select>
         </div>
+        <div style="flex:1.5">
+            <label>Expiry Series</label>
+            <div style="display:flex;gap:4px">
+                <select id="expirySeries" style="flex:1">
+                    <option value="">Nearest (default)</option>
+                </select>
+                <button id="loadExpiries" class="secondary" style="width:auto;margin:4px 0 0 0;padding:4px 8px" title="Load available expiries">🔄</button>
+            </div>
+        </div>
+    </div>
+    <div class="row">
         <div>
-            <label>Expiry</label>
-            <input type="date" id="expiry">
+            <label>Reference symbol for expiries</label>
+            <input type="text" id="expiryRefSymbol" value="NIFTY" placeholder="NIFTY">
         </div>
     </div>
 

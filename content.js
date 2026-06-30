@@ -510,4 +510,77 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         downloadCSV(request.results, {});
         sendResponse({ success: true });
     }
+
+    if (request.action === "getExpiries") {
+        getExpiries(request.underlying || "NIFTY")
+            .then(expiries => sendResponse({ success: true, expiries }))
+            .catch(error => sendResponse({ success: false, error: error.message }));
+        return true;
+    }
 });
+
+// Fetch the available expiry series for an underlying from the API response
+async function getExpiries(underlying) {
+    const requestPayload = {
+        underlying: underlying,
+        mode: "intraday",
+        expiries: {},
+        atm_strike_selection: "ten",
+        input_min_strike: null,
+        input_max_strike: null,
+        from_time: null,
+        to_time: null,
+        auto_update: "full_day",
+        from_date: null,
+        to_date: null,
+        show_oi: false
+    };
+
+    const response = await fetch(
+        "https://oxide.sensibull.com/v1/compute/1/oi_graphs/oi_change_chart",
+        {
+            method: "POST",
+            credentials: "include",
+            headers: {
+                "Content-Type": "application/json",
+                "x-device-id": "83bc2e49-de14-45bc-91cb-ede7c156b16f",
+                "frt-ref": Math.random().toString(36).substring(2)
+            },
+            body: JSON.stringify(requestPayload)
+        }
+    );
+
+    const json = await response.json();
+    const payload = json.payload || {};
+
+    // Look for expiries in known fields of the response
+    let expiriesRaw = payload.expiries || payload.expiry_dates || payload.all_expiries || null;
+
+    const result = [];
+
+    if (expiriesRaw && typeof expiriesRaw === "object" && !Array.isArray(expiriesRaw)) {
+        // Object form: { "2026-07-02": { is_weekly, is_enabled }, ... }
+        Object.entries(expiriesRaw).forEach(([date, info]) => {
+            result.push({
+                date,
+                isWeekly: info && typeof info === "object" ? !!info.is_weekly : true
+            });
+        });
+    } else if (Array.isArray(expiriesRaw)) {
+        // Array of date strings or objects
+        expiriesRaw.forEach(item => {
+            if (typeof item === "string") {
+                result.push({ date: item, isWeekly: true });
+            } else if (item && item.expiry) {
+                result.push({ date: item.expiry, isWeekly: !!item.is_weekly });
+            } else if (item && item.date) {
+                result.push({ date: item.date, isWeekly: !!item.is_weekly });
+            }
+        });
+    }
+
+    // Sort ascending by date
+    result.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    return result;
+}
