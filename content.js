@@ -284,7 +284,7 @@ async function scanSymbol(symbol, options = {}) {
     try {
 
         const expiries = expiry
-            ? { [symbol]: expiry }
+            ? { [expiry]: { is_weekly: true, is_enabled: true } }
             : {};
 
         const requestPayload = {
