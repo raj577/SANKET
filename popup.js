@@ -50,21 +50,25 @@ let lastScanResults = null;
 
 // ========== SCAN PANEL ==========
 
+document.getElementById("scanTodayBtn").addEventListener("click", () => startScan(false, true));
 document.getElementById("scanBtn").addEventListener("click", () => startScan(false));
 document.getElementById("scanWatchlistBtn").addEventListener("click", () => startScan(true));
 
-async function startScan(watchlistOnly) {
+async function startScan(watchlistOnly, todayOnly = false) {
     const status = document.getElementById("status");
     const progressFill = document.getElementById("progressFill");
     const scanBtn = document.getElementById("scanBtn");
     const scanWlBtn = document.getElementById("scanWatchlistBtn");
+    const scanTodayBtn = document.getElementById("scanTodayBtn");
 
     scanBtn.disabled = true;
     scanWlBtn.disabled = true;
+    scanTodayBtn.disabled = true;
 
-    const fromDate = document.getElementById("fromDate").value || null;
-    const toDate = document.getElementById("toDate").value || null;
-    const mode = document.getElementById("mode").value;
+    // Today-only ignores date fields and forces intraday for the current day
+    const fromDate = todayOnly ? null : (document.getElementById("fromDate").value || null);
+    const toDate = todayOnly ? null : (document.getElementById("toDate").value || null);
+    const mode = todayOnly ? "intraday" : document.getElementById("mode").value;
     const expiry = document.getElementById("expiry").value || null;
 
     let symbolsToScan = ALL_SYMBOLS;
@@ -123,6 +127,7 @@ async function startScan(watchlistOnly) {
 
     scanBtn.disabled = false;
     scanWlBtn.disabled = false;
+    scanTodayBtn.disabled = false;
 }
 
 // ========== DASHBOARD ==========
