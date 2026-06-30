@@ -1,0 +1,26 @@
+{
+    "manifest_version": 3,
+    "name": "Sensibull OI Scanner",
+    "version": "1.0",
+    "permissions": [
+        "activeTab",
+        "downloads"
+    ],
+    "host_permissions": [
+        "https://web.sensibull.com/*",
+        "https://oxide.sensibull.com/*"
+    ],
+    "action": {
+        "default_popup": "popup.html"
+    },
+    "content_scripts": [
+        {
+            "matches": [
+                "https://web.sensibull.com/*"
+            ],
+            "js": [
+                "content.js"
+            ]
+        }
+    ]
+}

@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+
+<style>
+body{
+    width:320px;
+    padding:15px;
+    font-family:Arial;
+}
+
+label{
+    display:block;
+    margin-top:10px;
+    font-size:13px;
+    font-weight:bold;
+}
+
+input, select{
+    width:100%;
+    padding:6px;
+    margin-top:4px;
+    box-sizing:border-box;
+}
+
+button{
+    width:100%;
+    padding:10px;
+    margin-top:14px;
+    cursor:pointer;
+}
+
+#status{
+    margin-top:10px;
+    font-size:13px;
+}
+
+.row{
+    display:flex;
+    gap:8px;
+}
+
+.row > div{
+    flex:1;
+}
+</style>
+</head>
+
+<body>
+
+<h3>Sensibull OI Scanner</h3>
+
+<div class="row">
+    <div>
+        <label for="fromDate">From Date</label>
+        <input type="date" id="fromDate">
+    </div>
+    <div>
+        <label for="toDate">To Date</label>
+        <input type="date" id="toDate">
+    </div>
+</div>
+
+<label for="mode">Mode</label>
+<select id="mode">
+    <option value="intraday">Intraday</option>
+    <option value="historical">Historical</option>
+</select>
+
+<label for="expiry">Expiry (YYYY-MM-DD, blank = current)</label>
+<input type="date" id="expiry">
+
+<button id="scanBtn">
+    Run Scan
+</button>
+
+<div id="status">
+    Ready
+</div>
+
+<script src="popup.js"></script>
+
+</body>
+</html>
