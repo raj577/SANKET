@@ -2,84 +2,190 @@
 <html>
 <head>
 <meta charset="utf-8">
-
 <style>
-body{
-    width:320px;
-    padding:15px;
-    font-family:Arial;
-}
-
-label{
-    display:block;
-    margin-top:10px;
-    font-size:13px;
-    font-weight:bold;
-}
-
-input, select{
-    width:100%;
-    padding:6px;
-    margin-top:4px;
-    box-sizing:border-box;
-}
-
-button{
-    width:100%;
-    padding:10px;
-    margin-top:14px;
-    cursor:pointer;
-}
-
-#status{
-    margin-top:10px;
-    font-size:13px;
-}
-
-.row{
-    display:flex;
-    gap:8px;
-}
-
-.row > div{
-    flex:1;
-}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { width: 520px; max-height: 600px; overflow-y: auto; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; background: #1a1a2e; color: #e0e0e0; }
+.header { background: #16213e; padding: 12px 16px; border-bottom: 1px solid #0f3460; display: flex; align-items: center; justify-content: space-between; }
+.header h2 { font-size: 15px; color: #4fc3f7; }
+.tabs { display: flex; background: #0f3460; }
+.tab { flex: 1; padding: 8px; text-align: center; cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.2s; }
+.tab:hover { background: #1a4080; }
+.tab.active { border-bottom-color: #4fc3f7; color: #4fc3f7; }
+.panel { display: none; padding: 12px; }
+.panel.active { display: block; }
+label { display: block; margin-top: 8px; font-size: 11px; color: #90a4ae; text-transform: uppercase; letter-spacing: 0.5px; }
+input, select { width: 100%; padding: 7px 10px; margin-top: 4px; background: #16213e; border: 1px solid #0f3460; color: #e0e0e0; border-radius: 4px; font-size: 13px; }
+input:focus, select:focus { outline: none; border-color: #4fc3f7; }
+button { width: 100%; padding: 10px; margin-top: 12px; background: #4fc3f7; color: #1a1a2e; border: none; border-radius: 4px; font-weight: 600; cursor: pointer; font-size: 13px; }
+button:hover { background: #81d4fa; }
+button:disabled { background: #455a64; color: #78909c; cursor: not-allowed; }
+button.secondary { background: #37474f; color: #e0e0e0; }
+button.secondary:hover { background: #455a64; }
+button.danger { background: #ef5350; }
+button.danger:hover { background: #f44336; }
+.row { display: flex; gap: 8px; }
+.row > div { flex: 1; }
+.status { margin-top: 8px; padding: 8px; background: #16213e; border-radius: 4px; font-size: 12px; }
+.progress-bar { width: 100%; height: 4px; background: #0f3460; border-radius: 2px; margin-top: 6px; overflow: hidden; }
+.progress-bar .fill { height: 100%; background: #4fc3f7; transition: width 0.3s; width: 0%; }
+.watchlist-grid { max-height: 200px; overflow-y: auto; margin-top: 8px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.watchlist-item { padding: 4px 6px; background: #16213e; border: 1px solid #0f3460; border-radius: 3px; font-size: 11px; cursor: pointer; text-align: center; transition: all 0.2s; }
+.watchlist-item.selected { background: #1b5e20; border-color: #4caf50; color: #a5d6a7; }
+.watchlist-item:hover { border-color: #4fc3f7; }
+.dashboard-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 11px; }
+.dashboard-table th { background: #0f3460; padding: 6px 4px; text-align: left; position: sticky; top: 0; }
+.dashboard-table td { padding: 5px 4px; border-bottom: 1px solid #16213e; }
+.dashboard-table tr:hover { background: #16213e; }
+.bullish { color: #4caf50; }
+.bearish { color: #ef5350; }
+.neutral { color: #78909c; }
+.history-item { padding: 8px; margin-top: 6px; background: #16213e; border-radius: 4px; cursor: pointer; }
+.history-item:hover { background: #1a4080; }
+.history-item .time { font-size: 11px; color: #78909c; }
+.history-item .count { color: #4fc3f7; }
+.toggle { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.toggle input[type="checkbox"] { width: auto; }
+.schedule-row { display: flex; align-items: center; gap: 6px; margin-top: 6px; padding: 6px; background: #16213e; border-radius: 4px; }
+.schedule-row input { width: 60px; }
+.settings-section { margin-top: 12px; padding-top: 12px; border-top: 1px solid #0f3460; }
+.badge { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; }
+.badge.green { background: #1b5e20; color: #a5d6a7; }
+.badge.red { background: #b71c1c; color: #ef9a9a; }
+#selectAll { margin-top: 8px; font-size: 11px; }
 </style>
 </head>
-
 <body>
 
-<h3>Sensibull OI Scanner</h3>
+<div class="header">
+    <h2>🔍 Sensibull OI Scanner</h2>
+    <span id="version" style="font-size:11px;color:#78909c">v2.0</span>
+</div>
 
-<div class="row">
-    <div>
-        <label for="fromDate">From Date</label>
-        <input type="date" id="fromDate">
+<div class="tabs">
+    <div class="tab active" data-tab="scan">Scan</div>
+    <div class="tab" data-tab="dashboard">Dashboard</div>
+    <div class="tab" data-tab="watchlist">Watchlist</div>
+    <div class="tab" data-tab="history">History</div>
+    <div class="tab" data-tab="settings">Settings</div>
+</div>
+
+<!-- SCAN PANEL -->
+<div class="panel active" id="panel-scan">
+    <div class="row">
+        <div>
+            <label>From Date</label>
+            <input type="date" id="fromDate">
+        </div>
+        <div>
+            <label>To Date</label>
+            <input type="date" id="toDate">
+        </div>
     </div>
-    <div>
-        <label for="toDate">To Date</label>
-        <input type="date" id="toDate">
+
+    <div class="row">
+        <div>
+            <label>Mode</label>
+            <select id="mode">
+                <option value="intraday">Intraday</option>
+                <option value="interday">Interday</option>
+            </select>
+        </div>
+        <div>
+            <label>Expiry</label>
+            <input type="date" id="expiry">
+        </div>
+    </div>
+
+    <button id="scanBtn">▶ Run Scan</button>
+    <button id="scanWatchlistBtn" class="secondary" style="margin-top:6px">▶ Scan Watchlist Only</button>
+
+    <div class="status" id="status">
+        <div>Ready</div>
+        <div class="progress-bar"><div class="fill" id="progressFill"></div></div>
     </div>
 </div>
 
-<label for="mode">Mode</label>
-<select id="mode">
-    <option value="intraday">Intraday</option>
-    <option value="interday">Interday</option>
-</select>
+<!-- DASHBOARD PANEL -->
+<div class="panel" id="panel-dashboard">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+        <span style="color:#78909c;font-size:11px" id="dashTime">No scan data yet</span>
+        <button class="secondary" style="width:auto;margin:0;padding:4px 10px;font-size:11px" id="exportCsvBtn">📥 CSV</button>
+    </div>
+    <div style="max-height:450px;overflow-y:auto;margin-top:8px">
+        <table class="dashboard-table" id="dashTable">
+            <thead>
+                <tr>
+                    <th>Symbol</th>
+                    <th>Spot</th>
+                    <th>PCR</th>
+                    <th>Call OI</th>
+                    <th>Put OI</th>
+                    <th>Signal</th>
+                </tr>
+            </thead>
+            <tbody id="dashBody"></tbody>
+        </table>
+    </div>
+</div>
 
-<label for="expiry">Expiry (YYYY-MM-DD, blank = nearest)</label>
-<input type="date" id="expiry">
+<!-- WATCHLIST PANEL -->
+<div class="panel" id="panel-watchlist">
+    <label>Search symbols</label>
+    <input type="text" id="symbolSearch" placeholder="Type to filter...">
+    <div style="margin-top:6px">
+        <span id="selectedCount" style="color:#4fc3f7;font-size:11px">0 selected</span>
+        <span id="selectAll" style="float:right;color:#4fc3f7;cursor:pointer">Select All</span>
+    </div>
+    <div class="watchlist-grid" id="watchlistGrid"></div>
+    <button id="saveWatchlist" style="margin-top:10px">Save Watchlist</button>
+</div>
 
-<button id="scanBtn">
-    Run Scan
-</button>
+<!-- HISTORY PANEL -->
+<div class="panel" id="panel-history">
+    <div style="display:flex;justify-content:space-between;align-items:center">
+        <span style="color:#78909c;font-size:11px">Last 50 scans stored</span>
+        <button class="danger" style="width:auto;margin:0;padding:4px 10px;font-size:11px" id="clearHistory">Clear</button>
+    </div>
+    <div id="historyList" style="max-height:450px;overflow-y:auto"></div>
+</div>
 
-<div id="status">
-    Ready
+<!-- SETTINGS PANEL -->
+<div class="panel" id="panel-settings">
+    <h3 style="font-size:13px;color:#4fc3f7;margin-bottom:8px">⏰ Scheduled Scans</h3>
+    <div class="toggle">
+        <input type="checkbox" id="scheduleEnabled">
+        <label style="margin:0">Enable scheduled scans</label>
+    </div>
+    <div id="scheduleList"></div>
+
+    <div class="settings-section">
+        <h3 style="font-size:13px;color:#4fc3f7;margin-bottom:8px">📱 Telegram Alerts</h3>
+        <div class="toggle">
+            <input type="checkbox" id="telegramEnabled">
+            <label style="margin:0">Send alerts to Telegram</label>
+        </div>
+        <label>Bot Token</label>
+        <input type="password" id="telegramToken" placeholder="123456:ABC-DEF...">
+        <label>Chat ID</label>
+        <input type="text" id="telegramChatId" placeholder="-1001234567890">
+        <button id="testTelegram" class="secondary" style="margin-top:8px">Test Message</button>
+    </div>
+
+    <div class="settings-section">
+        <h3 style="font-size:13px;color:#4fc3f7;margin-bottom:8px">📊 Google Sheets</h3>
+        <label>Sheet ID</label>
+        <input type="text" id="sheetId" placeholder="Spreadsheet ID from URL">
+        <label>Sheet Name</label>
+        <input type="text" id="sheetName" placeholder="Sheet1" value="Sheet1">
+        <button id="exportSheets" class="secondary" style="margin-top:8px">Export Last Scan to Sheets</button>
+        <div style="margin-top:6px;font-size:11px;color:#78909c">Note: Requires OAuth. Opens auth flow on first use.</div>
+    </div>
+
+    <div class="settings-section">
+        <button id="saveSettings">Save All Settings</button>
+    </div>
 </div>
 
 <script src="popup.js"></script>
-
 </body>
 </html>
