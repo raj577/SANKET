@@ -47,6 +47,7 @@ const ALL_SYMBOLS = [
 
 let selectedSymbols = new Set();
 let lastScanResults = null;
+let currentWatchlistName = "Default";
 
 // ========== SCAN PANEL ==========
 
@@ -56,7 +57,6 @@ document.getElementById("scanWatchlistBtn").addEventListener("click", () => star
 
 async function startScan(watchlistOnly, todayOnly = false) {
     const status = document.getElementById("status");
-    const progressFill = document.getElementById("progressFill");
     const scanBtn = document.getElementById("scanBtn");
     const scanWlBtn = document.getElementById("scanWatchlistBtn");
     const scanTodayBtn = document.getElementById("scanTodayBtn");
@@ -71,10 +71,18 @@ async function startScan(watchlistOnly, todayOnly = false) {
     const mode = todayOnly ? "intraday" : document.getElementById("mode").value;
     const expiry = document.getElementById("expiry").value || null;
 
+    // Scan tuning options
+    const delayMs = parseInt(document.getElementById("delayMs").value) || 1000;
+    const depth = parseInt(document.getElementById("depth").value) || 5;
+    const maxRetries = parseInt(document.getElementById("maxRetries").value) || 0;
+
     let symbolsToScan = ALL_SYMBOLS;
     if (watchlistOnly) {
-        const data = await chrome.storage.local.get("watchlist");
-        symbolsToScan = data.watchlist && data.watchlist.length > 0 ? data.watchlist : ALL_SYMBOLS;
+        const activeName = document.getElementById("activeWatchlistSelect").value;
+        const data = await chrome.storage.local.get("watchlists");
+        const lists = data.watchlists || {};
+        const wl = lists[activeName] || [];
+        symbolsToScan = wl.length > 0 ? wl : ALL_SYMBOLS;
     }
 
     status.innerHTML = `<div>Starting scan of ${symbolsToScan.length} symbols...</div><div class="progress-bar"><div class="fill" id="progressFill"></div></div>`;
@@ -93,16 +101,14 @@ async function startScan(watchlistOnly, todayOnly = false) {
             if (message.action === "scanComplete") {
                 lastScanResults = message.results;
                 renderDashboard(message.results);
-                // Save to history
                 chrome.runtime.sendMessage({
                     action: "saveScanHistory",
                     scanData: {
                         count: message.results.length,
-                        mode, fromDate, toDate, expiry,
+                        mode, fromDate, toDate, expiry, depth,
                         results: message.results
                     }
                 });
-                // Send telegram if enabled
                 sendTelegramSummary(message.results);
             }
         };
@@ -113,6 +119,7 @@ async function startScan(watchlistOnly, todayOnly = false) {
             action: "runScan",
             fromDate, toDate, mode, expiry,
             symbols: symbolsToScan,
+            delayMs, depth, maxRetries,
             reportProgress: true
         });
 
@@ -190,12 +197,43 @@ document.getElementById("exportCsvBtn").addEventListener("click", () => {
     });
 });
 
-// ========== WATCHLIST ==========
+// ========== WATCHLIST (multiple named lists) ==========
+async function getWatchlists() {
+    const data = await chrome.storage.local.get(["watchlists", "activeWatchlist"]);
+    let lists = data.watchlists;
+    if (!lists || Object.keys(lists).length === 0) {
+        lists = { "Default": [] };
+    }
+    const active = data.activeWatchlist && lists[data.activeWatchlist]
+        ? data.activeWatchlist
+        : Object.keys(lists)[0];
+    return { lists, active };
+}
+
 async function loadWatchlistUI() {
-    const data = await chrome.storage.local.get("watchlist");
-    const watchlist = data.watchlist || [];
-    selectedSymbols = new Set(watchlist);
+    const { lists, active } = await getWatchlists();
+    currentWatchlistName = active;
+
+    // Populate dropdown
+    const select = document.getElementById("watchlistSelect");
+    select.innerHTML = Object.keys(lists).map(name =>
+        `<option value="${name}" ${name === active ? "selected" : ""}>${name}</option>`
+    ).join("");
+
+    selectedSymbols = new Set(lists[active] || []);
     renderWatchlistGrid(ALL_SYMBOLS);
+    refreshActiveWatchlistDropdown();
+}
+
+async function refreshActiveWatchlistDropdown() {
+    // The dropdown on the Scan panel that selects which list "Scan Watchlist" uses
+    const { lists, active } = await getWatchlists();
+    const sel = document.getElementById("activeWatchlistSelect");
+    if (sel) {
+        sel.innerHTML = Object.keys(lists).map(name =>
+            `<option value="${name}" ${name === active ? "selected" : ""}>${name} (${lists[name].length})</option>`
+        ).join("");
+    }
 }
 
 function renderWatchlistGrid(symbols) {
@@ -222,6 +260,46 @@ function renderWatchlistGrid(symbols) {
     document.getElementById("selectedCount").textContent = `${selectedSymbols.size} selected`;
 }
 
+document.getElementById("watchlistSelect").addEventListener("change", async (e) => {
+    currentWatchlistName = e.target.value;
+    const { lists } = await getWatchlists();
+    selectedSymbols = new Set(lists[currentWatchlistName] || []);
+    await chrome.storage.local.set({ activeWatchlist: currentWatchlistName });
+    document.getElementById("symbolSearch").value = "";
+    renderWatchlistGrid(ALL_SYMBOLS);
+    refreshActiveWatchlistDropdown();
+});
+
+document.getElementById("newWatchlist").addEventListener("click", async () => {
+    const name = prompt("Name for new watchlist (e.g. Banking, Index, High PCR):");
+    if (!name || !name.trim()) return;
+    const cleanName = name.trim();
+
+    const { lists } = await getWatchlists();
+    if (lists[cleanName]) {
+        alert("A watchlist with that name already exists.");
+        return;
+    }
+    lists[cleanName] = [];
+    await chrome.storage.local.set({ watchlists: lists, activeWatchlist: cleanName });
+    await loadWatchlistUI();
+});
+
+document.getElementById("deleteWatchlist").addEventListener("click", async () => {
+    const { lists } = await getWatchlists();
+    const names = Object.keys(lists);
+    if (names.length <= 1) {
+        alert("Cannot delete the last watchlist.");
+        return;
+    }
+    if (!confirm(`Delete watchlist "${currentWatchlistName}"?`)) return;
+
+    delete lists[currentWatchlistName];
+    const newActive = Object.keys(lists)[0];
+    await chrome.storage.local.set({ watchlists: lists, activeWatchlist: newActive });
+    await loadWatchlistUI();
+});
+
 document.getElementById("symbolSearch").addEventListener("input", (e) => {
     const query = e.target.value.toUpperCase();
     const filtered = ALL_SYMBOLS.filter(s => s.includes(query));
@@ -238,7 +316,10 @@ document.getElementById("selectAll").addEventListener("click", () => {
 });
 
 document.getElementById("saveWatchlist").addEventListener("click", async () => {
-    await chrome.storage.local.set({ watchlist: [...selectedSymbols] });
+    const { lists } = await getWatchlists();
+    lists[currentWatchlistName] = [...selectedSymbols];
+    await chrome.storage.local.set({ watchlists: lists, activeWatchlist: currentWatchlistName });
+    refreshActiveWatchlistDropdown();
     document.getElementById("saveWatchlist").textContent = "✅ Saved!";
     setTimeout(() => { document.getElementById("saveWatchlist").textContent = "Save Watchlist"; }, 1500);
 });
@@ -435,3 +516,4 @@ async function sendTelegramSummary(results) {
 
 // ========== INIT ==========
 loadWatchlistUI();
+refreshActiveWatchlistDropdown();

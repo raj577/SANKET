@@ -14,9 +14,13 @@ chrome.runtime.onInstalled.addListener(() => {
             chrome.storage.local.set({ schedules: DEFAULT_SCHEDULES, schedulesEnabled: false });
         }
     });
-    chrome.storage.local.get("watchlist", (data) => {
-        if (!data.watchlist) {
-            chrome.storage.local.set({ watchlist: [] });
+    chrome.storage.local.get(["watchlists", "watchlist"], (data) => {
+        if (!data.watchlists) {
+            // Migrate old single watchlist if it exists
+            const migrated = data.watchlist && data.watchlist.length > 0
+                ? { "Default": data.watchlist }
+                : { "Default": [] };
+            chrome.storage.local.set({ watchlists: migrated, activeWatchlist: "Default" });
         }
     });
     chrome.storage.local.get("telegramConfig", (data) => {

@@ -218,41 +218,26 @@ VBL
 
 console.log(`Loaded ${ALL_SYMBOLS.length} symbols`);
 
-function categorizeStrikes(atmStrike, strikeList) {
+function categorizeStrikes(atmStrike, strikeList, depth = 5) {
     strikeList = strikeList.map(Number).sort((a, b) => a - b);
     const atmIndex = strikeList.indexOf(Number(atmStrike));
 
-    return {
-        ATM: strikeList[atmIndex],
-        CE: {
-            ITM1: strikeList[atmIndex - 1] ?? null,
-            ITM2: strikeList[atmIndex - 2] ?? null,
-            ITM3: strikeList[atmIndex - 3] ?? null,
-            ITM4: strikeList[atmIndex - 4] ?? null,
-            ITM5: strikeList[atmIndex - 5] ?? null,
-            OTM1: strikeList[atmIndex + 1] ?? null,
-            OTM2: strikeList[atmIndex + 2] ?? null,
-            OTM3: strikeList[atmIndex + 3] ?? null,
-            OTM4: strikeList[atmIndex + 4] ?? null,
-            OTM5: strikeList[atmIndex + 5] ?? null
-        },
-        PE: {
-            ITM1: strikeList[atmIndex + 1] ?? null,
-            ITM2: strikeList[atmIndex + 2] ?? null,
-            ITM3: strikeList[atmIndex + 3] ?? null,
-            ITM4: strikeList[atmIndex + 4] ?? null,
-            ITM5: strikeList[atmIndex + 5] ?? null,
-            OTM1: strikeList[atmIndex - 1] ?? null,
-            OTM2: strikeList[atmIndex - 2] ?? null,
-            OTM3: strikeList[atmIndex - 3] ?? null,
-            OTM4: strikeList[atmIndex - 4] ?? null,
-            OTM5: strikeList[atmIndex - 5] ?? null
-        }
-    };
+    const result = { ATM: strikeList[atmIndex], CE: {}, PE: {} };
+
+    for (let i = 1; i <= depth; i++) {
+        // CE: ITM is below ATM, OTM is above ATM
+        result.CE[`ITM${i}`] = strikeList[atmIndex - i] ?? null;
+        result.CE[`OTM${i}`] = strikeList[atmIndex + i] ?? null;
+        // PE: ITM is above ATM, OTM is below ATM
+        result.PE[`ITM${i}`] = strikeList[atmIndex + i] ?? null;
+        result.PE[`OTM${i}`] = strikeList[atmIndex - i] ?? null;
+    }
+
+    return result;
 }
 
 async function scanSymbol(symbol, options = {}) {
-    const { fromDate = null, toDate = null, mode = "intraday", expiry = null } = options;
+    const { fromDate = null, toDate = null, mode = "intraday", expiry = null, depth = 5 } = options;
 
     try {
         const expiries = expiry
@@ -288,6 +273,10 @@ async function scanSymbol(symbol, options = {}) {
             }
         );
 
+        if (response.status === 429) {
+            return { symbol, error: "Rate limited (429)" };
+        }
+
         const json = await response.json();
 
         if (!json.success || !json.payload) {
@@ -295,7 +284,7 @@ async function scanSymbol(symbol, options = {}) {
         }
 
         const responseData = json.payload;
-        const strikeMap = categorizeStrikes(responseData.atm_strike, responseData.strike_list);
+        const strikeMap = categorizeStrikes(responseData.atm_strike, responseData.strike_list, depth);
         const perStrike = responseData.per_strike_data || {};
         const bucketData = {};
 
@@ -321,7 +310,7 @@ async function scanSymbol(symbol, options = {}) {
             bucketData[`PE_${bucket}`] = { strike, putOiChange: strikeData.put_oi_change ?? 0 };
         });
 
-        // Research Fields
+        // Research Fields (uses first 3 strikes)
         bucketData.ITM_PE_Total = (bucketData.PE_ITM1?.putOiChange || 0) + (bucketData.PE_ITM2?.putOiChange || 0) + (bucketData.PE_ITM3?.putOiChange || 0);
         bucketData.OTM_PE_Total = (bucketData.PE_OTM1?.putOiChange || 0) + (bucketData.PE_OTM2?.putOiChange || 0) + (bucketData.PE_OTM3?.putOiChange || 0);
         bucketData.ITM_CE_Total = (bucketData.CE_ITM1?.callOiChange || 0) + (bucketData.CE_ITM2?.callOiChange || 0) + (bucketData.CE_ITM3?.callOiChange || 0);
@@ -335,6 +324,7 @@ async function scanSymbol(symbol, options = {}) {
             pcr: responseData.pcr,
             totalCallOI: responseData.total_call_oi_change,
             totalPutOI: responseData.total_put_oi_change,
+            depth,
             ...bucketData
         };
     } catch (err) {
@@ -344,51 +334,31 @@ async function scanSymbol(symbol, options = {}) {
 }
 
 function downloadCSV(rows, options = {}) {
-    const headers = [
-        "Symbol","Spot","PCR",
-        "ATM_Strike","ATM_CallOI","ATM_PutOI",
-        "CE_ITM1_Strike","CE_ITM1_CallOI","CE_ITM2_Strike","CE_ITM2_CallOI",
-        "CE_ITM3_Strike","CE_ITM3_CallOI","CE_ITM4_Strike","CE_ITM4_CallOI",
-        "CE_ITM5_Strike","CE_ITM5_CallOI",
-        "CE_OTM1_Strike","CE_OTM1_CallOI","CE_OTM2_Strike","CE_OTM2_CallOI",
-        "CE_OTM3_Strike","CE_OTM3_CallOI","CE_OTM4_Strike","CE_OTM4_CallOI",
-        "CE_OTM5_Strike","CE_OTM5_CallOI",
-        "PE_ITM1_Strike","PE_ITM1_PutOI","PE_ITM2_Strike","PE_ITM2_PutOI",
-        "PE_ITM3_Strike","PE_ITM3_PutOI","PE_ITM4_Strike","PE_ITM4_PutOI",
-        "PE_ITM5_Strike","PE_ITM5_PutOI",
-        "PE_OTM1_Strike","PE_OTM1_PutOI","PE_OTM2_Strike","PE_OTM2_PutOI",
-        "PE_OTM3_Strike","PE_OTM3_PutOI","PE_OTM4_Strike","PE_OTM4_PutOI",
-        "PE_OTM5_Strike","PE_OTM5_PutOI",
-        "ITM_PE_Total","ITM_CE_Total","OTM_PE_Total","OTM_CE_Total",
-        "SupportMigration","ResistanceMigration"
-    ];
+    // Determine depth from data or options (max across rows for safety)
+    const depth = options.depth || Math.max(5, ...rows.map(r => r.depth || 5));
 
-    const csvRows = rows.map(r => [
-        r.symbol, r.spot, r.pcr,
-        r.ATM?.strike, r.ATM?.callOiChange, r.ATM?.putOiChange,
-        r.CE_ITM1?.strike, r.CE_ITM1?.callOiChange,
-        r.CE_ITM2?.strike, r.CE_ITM2?.callOiChange,
-        r.CE_ITM3?.strike, r.CE_ITM3?.callOiChange,
-        r.CE_ITM4?.strike, r.CE_ITM4?.callOiChange,
-        r.CE_ITM5?.strike, r.CE_ITM5?.callOiChange,
-        r.CE_OTM1?.strike, r.CE_OTM1?.callOiChange,
-        r.CE_OTM2?.strike, r.CE_OTM2?.callOiChange,
-        r.CE_OTM3?.strike, r.CE_OTM3?.callOiChange,
-        r.CE_OTM4?.strike, r.CE_OTM4?.callOiChange,
-        r.CE_OTM5?.strike, r.CE_OTM5?.callOiChange,
-        r.PE_ITM1?.strike, r.PE_ITM1?.putOiChange,
-        r.PE_ITM2?.strike, r.PE_ITM2?.putOiChange,
-        r.PE_ITM3?.strike, r.PE_ITM3?.putOiChange,
-        r.PE_ITM4?.strike, r.PE_ITM4?.putOiChange,
-        r.PE_ITM5?.strike, r.PE_ITM5?.putOiChange,
-        r.PE_OTM1?.strike, r.PE_OTM1?.putOiChange,
-        r.PE_OTM2?.strike, r.PE_OTM2?.putOiChange,
-        r.PE_OTM3?.strike, r.PE_OTM3?.putOiChange,
-        r.PE_OTM4?.strike, r.PE_OTM4?.putOiChange,
-        r.PE_OTM5?.strike, r.PE_OTM5?.putOiChange,
-        r.ITM_PE_Total, r.ITM_CE_Total, r.OTM_PE_Total, r.OTM_CE_Total,
-        r.SupportMigration, r.ResistanceMigration
-    ].join(","));
+    const headers = ["Symbol", "Spot", "PCR", "ATM_Strike", "ATM_CallOI", "ATM_PutOI"];
+
+    // CE columns
+    for (let i = 1; i <= depth; i++) headers.push(`CE_ITM${i}_Strike`, `CE_ITM${i}_CallOI`);
+    for (let i = 1; i <= depth; i++) headers.push(`CE_OTM${i}_Strike`, `CE_OTM${i}_CallOI`);
+    // PE columns
+    for (let i = 1; i <= depth; i++) headers.push(`PE_ITM${i}_Strike`, `PE_ITM${i}_PutOI`);
+    for (let i = 1; i <= depth; i++) headers.push(`PE_OTM${i}_Strike`, `PE_OTM${i}_PutOI`);
+
+    headers.push("ITM_PE_Total", "ITM_CE_Total", "OTM_PE_Total", "OTM_CE_Total", "SupportMigration", "ResistanceMigration");
+
+    const csvRows = rows.map(r => {
+        const row = [r.symbol, r.spot, r.pcr, r.ATM?.strike, r.ATM?.callOiChange, r.ATM?.putOiChange];
+
+        for (let i = 1; i <= depth; i++) row.push(r[`CE_ITM${i}`]?.strike, r[`CE_ITM${i}`]?.callOiChange);
+        for (let i = 1; i <= depth; i++) row.push(r[`CE_OTM${i}`]?.strike, r[`CE_OTM${i}`]?.callOiChange);
+        for (let i = 1; i <= depth; i++) row.push(r[`PE_ITM${i}`]?.strike, r[`PE_ITM${i}`]?.putOiChange);
+        for (let i = 1; i <= depth; i++) row.push(r[`PE_OTM${i}`]?.strike, r[`PE_OTM${i}`]?.putOiChange);
+
+        row.push(r.ITM_PE_Total, r.ITM_CE_Total, r.OTM_PE_Total, r.OTM_CE_Total, r.SupportMigration, r.ResistanceMigration);
+        return row.join(",");
+    });
 
     const csv = [headers.join(","), ...csvRows].join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
@@ -425,6 +395,8 @@ function getDatesBetween(startDate, endDate) {
 async function runScanner(options = {}) {
     const { fromDate, toDate, symbols: customSymbols, reportProgress } = options;
     const symbols = customSymbols || ALL_SYMBOLS;
+    const delayMs = options.delayMs ?? 1000;
+    const maxRetries = options.maxRetries ?? 1;
 
     const dates = (fromDate && toDate) ? getDatesBetween(fromDate, toDate) : [null];
     let totalScanned = 0;
@@ -442,7 +414,6 @@ async function runScanner(options = {}) {
         for (let i = 0; i < symbols.length; i++) {
             const symbol = symbols[i];
 
-            // Report progress to popup
             if (reportProgress) {
                 chrome.runtime.sendMessage({
                     action: "scanProgress",
@@ -457,7 +428,40 @@ async function runScanner(options = {}) {
             const result = await scanSymbol(symbol, dayOptions);
             results.push(result);
 
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+        }
+
+        // Retry failed symbols
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            const failedIndexes = results
+                .map((r, idx) => (r.error ? idx : -1))
+                .filter(idx => idx !== -1);
+
+            if (failedIndexes.length === 0) break;
+
+            console.log(`Retry attempt ${attempt}: ${failedIndexes.length} failed symbols`);
+
+            for (let j = 0; j < failedIndexes.length; j++) {
+                const idx = failedIndexes[j];
+                const symbol = results[idx].symbol;
+
+                if (reportProgress) {
+                    chrome.runtime.sendMessage({
+                        action: "scanProgress",
+                        current: j + 1,
+                        total: failedIndexes.length,
+                        symbol: `🔄 ${symbol} (retry ${attempt})`,
+                        date: date || "today"
+                    });
+                }
+
+                // Retries wait a bit longer to dodge rate limits
+                await new Promise(resolve => setTimeout(resolve, delayMs + 500));
+                const retryResult = await scanSymbol(symbol, dayOptions);
+                if (!retryResult.error) {
+                    results[idx] = retryResult;
+                }
+            }
         }
 
         downloadCSV(results, dayOptions);
@@ -465,7 +469,6 @@ async function runScanner(options = {}) {
         totalScanned += results.length;
     }
 
-    // Send complete results to popup
     if (reportProgress) {
         chrome.runtime.sendMessage({
             action: "scanComplete",
@@ -487,7 +490,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             mode: request.mode || "intraday",
             expiry: request.expiry || null,
             symbols: request.symbols || null,
-            reportProgress: request.reportProgress || false
+            reportProgress: request.reportProgress || false,
+            delayMs: request.delayMs ?? 1000,
+            depth: request.depth ?? 5,
+            maxRetries: request.maxRetries ?? 1
         };
 
         runScanner(options)
