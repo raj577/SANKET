@@ -30,6 +30,12 @@ class ScanCompleteRequest(ORMModel):
     error_message: str | None = Field(default=None, max_length=4000)
 
 
+class KotakScanRequest(ORMModel):
+    symbols: list[str] | None = None
+    depth: int = Field(default=5, ge=3, le=10)
+    expiry: str | None = Field(default=None, max_length=10)
+
+
 class ScanCsvSummary(ORMModel):
     csv_filename: str | None = None
     csv_storage_path: str | None = None

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Badge, Card, Empty, ErrorText, Field, Modal, Pagination, Spinner } from "@/components/ui";
 import { api, buildQuery } from "@/lib/api";
@@ -19,8 +19,48 @@ export default function ScansPage() {
   const [detailError, setDetailError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  const [symbols, setSymbols] = useState("");
+  const [depth, setDepth] = useState(5);
+  const [expiry, setExpiry] = useState("");
+  const [starting, setStarting] = useState(false);
+  const [startMessage, setStartMessage] = useState<string | null>(null);
+  const [startError, setStartError] = useState<string | null>(null);
+
   const path = `/admin/scans${buildQuery({ page, page_size: PAGE_SIZE, status, search })}`;
   const { data, loading, error, reload } = useApiData<Page<Scan>>(path);
+
+  useEffect(() => {
+    const running = data?.items.some(
+      (scan) => scan.status === "PENDING" || scan.status === "RUNNING"
+    );
+    if (!running) return;
+    const timer = window.setInterval(reload, 4000);
+    return () => window.clearInterval(timer);
+  }, [data, reload]);
+
+  async function runKotakScan() {
+    setStarting(true);
+    setStartError(null);
+    setStartMessage(null);
+    const parsed = symbols
+      .split(/[\s,]+/)
+      .map((item) => item.trim().toUpperCase())
+      .filter(Boolean);
+    try {
+      const scan = await api.post<Scan>("/admin/scans/kotak", {
+        symbols: parsed.length ? parsed : null,
+        depth,
+        expiry: expiry || null
+      });
+      setStartMessage(`Scan ${scan.id.slice(0, 8)} queued. Candidates appear when it finishes.`);
+      setPage(1);
+      reload();
+    } catch (err) {
+      setStartError(err instanceof Error ? err.message : "Unable to start the Kotak scan");
+    } finally {
+      setStarting(false);
+    }
+  }
 
   async function openDetail(scanId: string) {
     setDetailLoading(true);
@@ -49,6 +89,46 @@ export default function ScansPage() {
 
   return (
     <>
+      <Card
+        title="Run Kotak scan"
+        actions={<Badge tone="blue">No extension</Badge>}
+      >
+        <div className="filters" style={{ marginBottom: 14 }}>
+          <Field label="Symbols" hint="Comma or newline separated. Blank uses the saved watchlist.">
+            <textarea
+              value={symbols}
+              onChange={(event) => setSymbols(event.target.value)}
+              placeholder="NIFTY, RELIANCE, WIPRO"
+              rows={3}
+              style={{ minWidth: 320 }}
+            />
+          </Field>
+          <Field label="Strike depth">
+            <input
+              type="number"
+              min={3}
+              max={10}
+              value={depth}
+              onChange={(event) => setDepth(Math.max(3, Math.min(10, Number(event.target.value) || 5)))}
+            />
+          </Field>
+          <Field label="Expiry" hint="Optional, YYYY-MM-DD">
+            <input type="date" value={expiry} onChange={(event) => setExpiry(event.target.value)} />
+          </Field>
+          <div className="flex" style={{ alignItems: "flex-end" }}>
+            <button className="btn" onClick={runKotakScan} disabled={starting}>
+              {starting ? "Starting…" : "Run Kotak scan"}
+            </button>
+          </div>
+        </div>
+        {startMessage ? <div className="success-text">{startMessage}</div> : null}
+        <ErrorText error={startError} />
+        <div className="muted small">
+          Fetches Kotak option-chain OI changes and runs the same versioned filter. The
+          generated CSV is archived like an extension upload.
+        </div>
+      </Card>
+
       <Card
         title="Scan runs"
         actions={

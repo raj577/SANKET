@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime, timezone
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -31,6 +31,7 @@ from app.schemas.scan import (
     CandidateDetailOut,
     CandidateOut,
     CandidateRejectRequest,
+    KotakScanRequest,
     ScanDetailOut,
     ScanOut,
 )
@@ -46,6 +47,7 @@ from app.schemas.signal import (
 from app.services import (
     audit_service,
     candidate_service,
+    kotak_scan_service,
     scan_service,
     settings_service,
     signal_service,
@@ -186,6 +188,45 @@ def list_scans(
         limit=page_size,
     )
     return _page([scan_out(scan) for scan in scans], total, page, page_size)
+
+
+@router.post("/scans/kotak", response_model=ScanOut, status_code=202)
+def start_kotak_scan(
+    payload: KotakScanRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+) -> ScanOut:
+    """Run the scanner directly from Kotak option-chain data.
+
+    The browser extension is not involved; only the Kotak consumer key is
+    needed. The job runs after the response and archives the generated CSV.
+    """
+    symbols = kotak_scan_service.solve_symbols(db, payload.symbols)
+    if not symbols:
+        raise ValidationError(
+            "No symbols supplied and the saved watchlist is empty"
+        )
+    scan = scan_service.create_scan(
+        db, total_symbols=len(symbols), trigger="kotak"
+    )
+    audit_service.record(
+        db,
+        action="SCAN_STARTED",
+        entity_type="scan_run",
+        entity_id=str(scan.id),
+        details={"source": "kotak", "symbols": len(symbols), "depth": payload.depth},
+        user=user,
+    )
+    db.commit()
+    background_tasks.add_task(
+        kotak_scan_service.run_scan_job,
+        scan.id,
+        symbols,
+        payload.depth,
+        payload.expiry,
+    )
+    return scan_out(scan)
 
 
 @router.get("/scans/{scan_id}", response_model=ScanDetailOut)
