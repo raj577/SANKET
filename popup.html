@@ -58,7 +58,7 @@ button.danger:hover { background: #f44336; }
 
 <div class="header">
     <h2>🔍 Sensibull OI Scanner</h2>
-    <span id="version" style="font-size:11px;color:#78909c">v2.2</span>
+    <span id="version" style="font-size:11px;color:#78909c">v3.1</span>
 </div>
 
 <div class="tabs">
@@ -90,20 +90,9 @@ button.danger:hover { background: #f44336; }
                 <option value="interday">Interday</option>
             </select>
         </div>
-        <div style="flex:1.5">
-            <label>Expiry Series</label>
-            <div style="display:flex;gap:4px">
-                <select id="expirySeries" style="flex:1">
-                    <option value="">Nearest (default)</option>
-                </select>
-                <button id="loadExpiries" class="secondary" style="width:auto;margin:4px 0 0 0;padding:4px 8px" title="Load available expiries">🔄</button>
-            </div>
-        </div>
-    </div>
-    <div class="row">
         <div>
-            <label>Reference symbol for expiries</label>
-            <input type="text" id="expiryRefSymbol" value="NIFTY" placeholder="NIFTY">
+            <label>Expiry</label>
+            <input type="date" id="expiry">
         </div>
     </div>
 
@@ -215,6 +204,21 @@ button.danger:hover { background: #f44336; }
         <label>Chat ID</label>
         <input type="text" id="telegramChatId" placeholder="-1001234567890">
         <button id="testTelegram" class="secondary" style="margin-top:8px">Test Message</button>
+    </div>
+
+    <div class="settings-section">
+        <h3 style="font-size:13px;color:#4fc3f7;margin-bottom:8px">☁️ Backend Upload</h3>
+        <div class="toggle">
+            <input type="checkbox" id="uploadEnabled">
+            <label style="margin:0">Archive scans to backend</label>
+        </div>
+        <label>Backend URL</label>
+        <input type="url" id="backendUrl" placeholder="http://localhost:8000">
+        <label>Collector Token</label>
+        <input type="password" id="collectorToken" placeholder="col_...">
+        <button id="testBackend" class="secondary" style="margin-top:8px">Test Connection</button>
+        <div class="status" id="backendStatus" style="display:none"></div>
+        <div style="margin-top:6px;font-size:11px;color:#78909c">The original CSV is archived by the backend, then filtered candidates are extracted.</div>
     </div>
 
     <div class="settings-section">

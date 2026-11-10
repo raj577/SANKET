@@ -55,50 +55,6 @@ document.getElementById("scanTodayBtn").addEventListener("click", () => startSca
 document.getElementById("scanBtn").addEventListener("click", () => startScan(false));
 document.getElementById("scanWatchlistBtn").addEventListener("click", () => startScan(true));
 
-// ===== Load expiry series from Sensibull =====
-document.getElementById("loadExpiries").addEventListener("click", loadExpirySeries);
-
-async function loadExpirySeries() {
-    const btn = document.getElementById("loadExpiries");
-    const select = document.getElementById("expirySeries");
-    const underlying = (document.getElementById("expiryRefSymbol").value || "NIFTY").trim().toUpperCase();
-
-    btn.textContent = "⏳";
-    try {
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        const response = await chrome.tabs.sendMessage(tab.id, { action: "getExpiries", underlying });
-
-        if (response && response.success && response.expiries && response.expiries.length > 0) {
-            const current = select.value;
-            select.innerHTML = '<option value="">Nearest (default)</option>' +
-                response.expiries.map(e => {
-                    const type = e.isWeekly ? "Weekly" : "Monthly";
-                    const label = formatExpiryLabel(e.date);
-                    return `<option value="${e.date}">${label} (${type})</option>`;
-                }).join("");
-            // Try to keep previous selection
-            if (current) select.value = current;
-            btn.textContent = "✅";
-        } else {
-            btn.textContent = "❌";
-            console.warn("No expiries returned", response);
-        }
-    } catch (e) {
-        console.error(e);
-        btn.textContent = "❌";
-    }
-    setTimeout(() => { btn.textContent = "🔄"; }, 1500);
-}
-
-function formatExpiryLabel(dateStr) {
-    const d = new Date(dateStr);
-    if (isNaN(d)) return dateStr;
-    const day = String(d.getDate()).padStart(2, "0");
-    const month = d.toLocaleString("en-US", { month: "short" });
-    const year = d.getFullYear();
-    return `${day} ${month} ${year}`;
-}
-
 async function startScan(watchlistOnly, todayOnly = false) {
     const status = document.getElementById("status");
     const scanBtn = document.getElementById("scanBtn");
@@ -113,7 +69,7 @@ async function startScan(watchlistOnly, todayOnly = false) {
     const fromDate = todayOnly ? null : (document.getElementById("fromDate").value || null);
     const toDate = todayOnly ? null : (document.getElementById("toDate").value || null);
     const mode = todayOnly ? "intraday" : document.getElementById("mode").value;
-    const expiry = document.getElementById("expirySeries").value || null;
+    const expiry = document.getElementById("expiry").value || null;
 
     // Scan tuning options
     const delayMs = parseInt(document.getElementById("delayMs").value) || 1000;
@@ -129,56 +85,85 @@ async function startScan(watchlistOnly, todayOnly = false) {
         symbolsToScan = wl.length > 0 ? wl : ALL_SYMBOLS;
     }
 
-    status.innerHTML = `<div>Starting scan of ${symbolsToScan.length} symbols...</div><div class="progress-bar"><div class="fill" id="progressFill"></div></div>`;
+    // Surface the real upload state at scan time, not just in Settings.
+    let uploadStateLine = "";
+    try {
+        const { backendConfig } = await chrome.storage.local.get("backendConfig");
+        const uploadOn = backendConfig?.uploadEnabled === true;
+        uploadStateLine = uploadOn
+            ? `<div style="margin-top:4px;font-size:11px;color:#4caf50">Backend upload: ON (archives to database)</div>`
+            : `<div style="margin-top:4px;font-size:11px;color:#ef5350">Backend upload: OFF — scans save only to Downloads. Enable in Settings.</div>`;
+    } catch (error) {
+        // Storage is always available in a popup; ignore defensively.
+    }
+
+    status.innerHTML = `<div>Starting scan of ${symbolsToScan.length} symbols...</div>${uploadStateLine}<div class="progress-bar"><div class="fill" id="progressFill"></div></div>`;
+
+    // Progress messages are broadcast by the content script and received here.
+    const progressListener = (message) => {
+        if (message.action === "scanProgress") {
+            const pct = Math.round((message.current / message.total) * 100);
+            const fill = document.getElementById("progressFill");
+            if (fill) fill.style.width = pct + "%";
+            status.innerHTML = `<div>[${message.date || "today"}] ${message.current}/${message.total}: ${message.symbol}</div><div class="progress-bar"><div class="fill" style="width:${pct}%"></div></div>`;
+        }
+        if (message.action === "scanComplete") {
+            lastScanResults = message.results;
+            renderDashboard(message.results);
+            chrome.runtime.sendMessage({
+                action: "saveScanHistory",
+                scanData: {
+                    count: message.results.length,
+                    mode, fromDate, toDate, expiry, depth,
+                    results: message.results
+                }
+            });
+            sendTelegramSummary(message.results);
+        }
+    };
+
+    chrome.runtime.onMessage.addListener(progressListener);
 
     try {
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-
-        // Listen for progress updates
-        const progressListener = (message) => {
-            if (message.action === "scanProgress") {
-                const pct = Math.round((message.current / message.total) * 100);
-                const fill = document.getElementById("progressFill");
-                if (fill) fill.style.width = pct + "%";
-                status.innerHTML = `<div>[${message.date || "today"}] ${message.current}/${message.total}: ${message.symbol}</div><div class="progress-bar"><div class="fill" style="width:${pct}%"></div></div>`;
+        const response = await chrome.runtime.sendMessage({
+            action: "orchestrateScan",
+            options: {
+                fromDate, toDate, mode, expiry,
+                symbols: symbolsToScan,
+                delayMs, depth, maxRetries,
+                reportProgress: true,
+                trigger: "manual"
             }
-            if (message.action === "scanComplete") {
-                lastScanResults = message.results;
-                renderDashboard(message.results);
-                chrome.runtime.sendMessage({
-                    action: "saveScanHistory",
-                    scanData: {
-                        count: message.results.length,
-                        mode, fromDate, toDate, expiry, depth,
-                        results: message.results
-                    }
-                });
-                sendTelegramSummary(message.results);
-            }
-        };
-
-        chrome.runtime.onMessage.addListener(progressListener);
-
-        const response = await chrome.tabs.sendMessage(tab.id, {
-            action: "runScan",
-            fromDate, toDate, mode, expiry,
-            symbols: symbolsToScan,
-            delayMs, depth, maxRetries,
-            reportProgress: true
         });
 
-        status.innerHTML = `<div>✅ ${response?.message || "Done"}</div><div class="progress-bar"><div class="fill" style="width:100%"></div></div>`;
+        if (!response || response.ok === false) {
+            throw new Error(response?.error || "Scan failed");
+        }
 
-        chrome.runtime.onMessage.removeListener(progressListener);
-
+        let message;
+        if (response.upload) {
+            const prefix = response.status === "FAILED"
+                ? `⚠️ CSV archived as ${response.csvFilename}, but scanning failed`
+                : `✅ Archived ${response.csvFilename} — ${response.status}`;
+            message = `${prefix} · ${response.longCount} LONG / ${response.shortCount} SHORT`;
+        } else if (response.uploadError) {
+            message = `⚠️ Scanned ${response.count} symbols, but upload failed: ${response.uploadError}. CSV downloaded locally.`;
+        } else {
+            const localNote = response.localOnly
+                ? " — stored locally only (backend upload is OFF in Settings)"
+                : "";
+            message = `✅ ${response.message || "Done"}${localNote}`;
+        }
+        status.innerHTML = `<div>${message}</div><div class="progress-bar"><div class="fill" style="width:100%"></div></div>`;
     } catch (e) {
         console.error(e);
         status.innerHTML = `<div>❌ ${e.message || "Open a Sensibull tab first"}</div>`;
+    } finally {
+        chrome.runtime.onMessage.removeListener(progressListener);
+        scanBtn.disabled = false;
+        scanWlBtn.disabled = false;
+        scanTodayBtn.disabled = false;
     }
-
-    scanBtn.disabled = false;
-    scanWlBtn.disabled = false;
-    scanTodayBtn.disabled = false;
 }
 
 // ========== DASHBOARD ==========
@@ -235,9 +220,25 @@ function formatNum(n) {
 
 document.getElementById("exportCsvBtn").addEventListener("click", () => {
     if (!lastScanResults) return;
-    // Trigger CSV download via content script
+    // Trigger CSV download via the content script. The send can fail when the
+    // active tab is not a Sensibull page or its content script is stale.
     chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
-        chrome.tabs.sendMessage(tab.id, { action: "downloadCSV", results: lastScanResults });
+        const dashTime = document.getElementById("dashTime");
+        chrome.tabs.sendMessage(
+            tab.id,
+            { action: "downloadCSV", results: lastScanResults },
+            () => {
+                const error = chrome.runtime.lastError;
+                if (error) {
+                    console.warn("CSV export failed:", error.message);
+                    if (dashTime) {
+                        dashTime.textContent = "⚠️ Open a Sensibull tab, refresh it (F5), then export again";
+                    }
+                    return;
+                }
+                if (dashTime) dashTime.textContent = "CSV downloaded";
+            }
+        );
     });
 });
 
@@ -416,7 +417,7 @@ document.getElementById("clearHistory").addEventListener("click", async () => {
 
 // ========== SETTINGS ==========
 async function loadSettings() {
-    const data = await chrome.storage.local.get(["schedules", "schedulesEnabled", "telegramConfig", "sheetsConfig"]);
+    const data = await chrome.storage.local.get(["schedules", "schedulesEnabled", "telegramConfig", "sheetsConfig", "backendConfig"]);
 
     // Schedules
     const schedules = data.schedules || [
@@ -448,6 +449,15 @@ async function loadSettings() {
     const sheets = data.sheetsConfig || { sheetId: "", sheetName: "Sheet1" };
     document.getElementById("sheetId").value = sheets.sheetId || "";
     document.getElementById("sheetName").value = sheets.sheetName || "Sheet1";
+
+    // Backend upload
+    const backend = Object.assign(
+        { baseUrl: "http://localhost:8000", collectorToken: "", uploadEnabled: false },
+        data.backendConfig || {}
+    );
+    document.getElementById("uploadEnabled").checked = backend.uploadEnabled === true;
+    document.getElementById("backendUrl").value = backend.baseUrl || "";
+    document.getElementById("collectorToken").value = backend.collectorToken || "";
 }
 
 document.getElementById("saveSettings").addEventListener("click", async () => {
@@ -475,14 +485,51 @@ document.getElementById("saveSettings").addEventListener("click", async () => {
         sheetId: document.getElementById("sheetId").value,
         sheetName: document.getElementById("sheetName").value
     };
+    const backendConfig = {
+        baseUrl: document.getElementById("backendUrl").value.trim(),
+        collectorToken: document.getElementById("collectorToken").value.trim(),
+        uploadEnabled: document.getElementById("uploadEnabled").checked
+    };
 
-    await chrome.storage.local.set({ schedules, schedulesEnabled, telegramConfig, sheetsConfig });
+    await chrome.storage.local.set({ schedules, schedulesEnabled, telegramConfig, sheetsConfig, backendConfig });
 
     // Update alarms
     chrome.runtime.sendMessage({ action: "updateSchedules", schedules, enabled: schedulesEnabled });
 
     document.getElementById("saveSettings").textContent = "✅ Saved!";
     setTimeout(() => { document.getElementById("saveSettings").textContent = "Save All Settings"; }, 1500);
+});
+
+document.getElementById("testBackend").addEventListener("click", async () => {
+    const btn = document.getElementById("testBackend");
+    const status = document.getElementById("backendStatus");
+    const config = {
+        baseUrl: document.getElementById("backendUrl").value.trim(),
+        collectorToken: document.getElementById("collectorToken").value.trim(),
+        uploadEnabled: true
+    };
+    // Sai… save FIRST: a green "Connected" must never be possible while the
+    // values are still unsaved. Test-without-save was a trap.
+    await chrome.storage.local.set({ backendConfig: config });
+    status.style.display = "block";
+    status.textContent = "Saved ✓ — testing connection...";
+    btn.textContent = "Testing...";
+    try {
+        const response = await chrome.runtime.sendMessage({ action: "testBackend", config });
+        if (!response || response.ok === false) {
+            throw new Error(response?.error || "Connection failed");
+        }
+        const storage = response.status?.storage_backend || "unknown";
+        const scanner = response.status?.scanner_version || "unknown";
+        const lastScan = response.status?.last_scan;
+        const last = lastScan ? `${lastScan.status} at ${new Date(lastScan.started_at).toLocaleString()}` : "none";
+        status.textContent = `✅ Saved & connected · storage: ${storage} · scanner: ${scanner} · last scan: ${last}`;
+        btn.textContent = "✅ Connected";
+    } catch (error) {
+        status.textContent = `❌ ${error?.message || "Connection failed"} (values were saved — fix URL/token and test again)`;
+        btn.textContent = "❌ Failed";
+    }
+    setTimeout(() => { btn.textContent = "Test Connection"; }, 2500);
 });
 
 document.getElementById("testTelegram").addEventListener("click", async () => {
@@ -561,5 +608,3 @@ async function sendTelegramSummary(results) {
 // ========== INIT ==========
 loadWatchlistUI();
 refreshActiveWatchlistDropdown();
-// Try to auto-load expiry series (silently fails if no Sensibull tab)
-loadExpirySeries().catch(() => {});

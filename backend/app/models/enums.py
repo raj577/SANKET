@@ -1,0 +1,66 @@
+"""Shared enumerations for the domain model."""
+from __future__ import annotations
+
+from enum import StrEnum
+
+
+class Role(StrEnum):
+    ADMIN = "ADMIN"
+    USER = "USER"
+
+
+class Direction(StrEnum):
+    LONG = "LONG"
+    SHORT = "SHORT"
+
+
+class ScanStatus(StrEnum):
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    PARTIAL = "PARTIAL"
+    FAILED = "FAILED"
+
+
+class CandidateStatus(StrEnum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    PUBLISHED = "PUBLISHED"
+    EXPIRED = "EXPIRED"
+
+
+class SignalStatus(StrEnum):
+    ACTIVE = "ACTIVE"
+    TARGET_HIT = "TARGET_HIT"
+    STOPLOSS_HIT = "STOPLOSS_HIT"
+    EXPIRED = "EXPIRED"
+    CANCELLED = "CANCELLED"
+
+
+class PriceEventType(StrEnum):
+    SNAPSHOT = "SNAPSHOT"
+    PUBLISHED = "PUBLISHED"
+    TARGET_HIT = "TARGET_HIT"
+    STOPLOSS_HIT = "STOPLOSS_HIT"
+    CANCELLED = "CANCELLED"
+    CLOSED = "CLOSED"
+
+
+class AuditAction(StrEnum):
+    CANDIDATE_APPROVED = "CANDIDATE_APPROVED"
+    CANDIDATE_REJECTED = "CANDIDATE_REJECTED"
+    SIGNAL_PUBLISHED = "SIGNAL_PUBLISHED"
+    SIGNAL_ENTRY_CHANGED = "SIGNAL_ENTRY_CHANGED"
+    SIGNAL_TARGET_CHANGED = "SIGNAL_TARGET_CHANGED"
+    SIGNAL_STOPLOSS_CHANGED = "SIGNAL_STOPLOSS_CHANGED"
+    SIGNAL_CANCELLED = "SIGNAL_CANCELLED"
+    SIGNAL_CLOSED = "SIGNAL_CLOSED"
+    CSV_DELETED = "CSV_DELETED"
+    USER_CREATED = "USER_CREATED"
+    USER_UPDATED = "USER_UPDATED"
+    SETTINGS_UPDATED = "SETTINGS_UPDATED"
+    FYERS_TOKEN_UPDATED = "FYERS_TOKEN_UPDATED"
+
+
+GRADE_ORDER = {"A+": 5, "A": 4, "B+": 3, "B": 2, "C": 1, "Ignore": 0}

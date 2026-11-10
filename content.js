@@ -1,4 +1,4 @@
-console.log("Sensibull Scanner v2.0 Loaded");
+console.log("Sensibull Scanner v3.1 Loaded");
 
 const ALL_SYMBOLS = `
 NIFTY
@@ -334,46 +334,17 @@ async function scanSymbol(symbol, options = {}) {
 }
 
 function downloadCSV(rows, options = {}) {
-    // Determine depth from data or options (max across rows for safety)
-    const depth = options.depth || Math.max(5, ...rows.map(r => r.depth || 5));
-
-    const headers = ["Symbol", "Spot", "PCR", "ATM_Strike", "ATM_CallOI", "ATM_PutOI"];
-
-    // CE columns
-    for (let i = 1; i <= depth; i++) headers.push(`CE_ITM${i}_Strike`, `CE_ITM${i}_CallOI`);
-    for (let i = 1; i <= depth; i++) headers.push(`CE_OTM${i}_Strike`, `CE_OTM${i}_CallOI`);
-    // PE columns
-    for (let i = 1; i <= depth; i++) headers.push(`PE_ITM${i}_Strike`, `PE_ITM${i}_PutOI`);
-    for (let i = 1; i <= depth; i++) headers.push(`PE_OTM${i}_Strike`, `PE_OTM${i}_PutOI`);
-
-    headers.push("ITM_PE_Total", "ITM_CE_Total", "OTM_PE_Total", "OTM_CE_Total", "SupportMigration", "ResistanceMigration");
-
-    const csvRows = rows.map(r => {
-        const row = [r.symbol, r.spot, r.pcr, r.ATM?.strike, r.ATM?.callOiChange, r.ATM?.putOiChange];
-
-        for (let i = 1; i <= depth; i++) row.push(r[`CE_ITM${i}`]?.strike, r[`CE_ITM${i}`]?.callOiChange);
-        for (let i = 1; i <= depth; i++) row.push(r[`CE_OTM${i}`]?.strike, r[`CE_OTM${i}`]?.callOiChange);
-        for (let i = 1; i <= depth; i++) row.push(r[`PE_ITM${i}`]?.strike, r[`PE_ITM${i}`]?.putOiChange);
-        for (let i = 1; i <= depth; i++) row.push(r[`PE_OTM${i}`]?.strike, r[`PE_OTM${i}`]?.putOiChange);
-
-        row.push(r.ITM_PE_Total, r.ITM_CE_Total, r.OTM_PE_Total, r.OTM_CE_Total, r.SupportMigration, r.ResistanceMigration);
-        return row.join(",");
-    });
-
-    const csv = [headers.join(","), ...csvRows].join("\n");
+    if (!globalThis.SensibullCsv) {
+        console.error("CSV builder is not loaded");
+        return;
+    }
+    const csv = globalThis.SensibullCsv.buildCSV(rows, options);
+    const filename = globalThis.SensibullCsv.buildFileName(options);
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-
-    const now = new Date();
-    const ts = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}-${String(now.getDate()).padStart(2,"0")}_${String(now.getHours()).padStart(2,"0")}-${String(now.getMinutes()).padStart(2,"0")}`;
-    let nameParts = ["sensibull_oi_scan"];
-    if (options.fromDate) nameParts.push(options.fromDate);
-    if (options.expiry) nameParts.push("exp_" + options.expiry);
-    nameParts.push(ts);
-    a.download = nameParts.join("_") + ".csv";
-
+    a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
 }
@@ -393,7 +364,7 @@ function getDatesBetween(startDate, endDate) {
 }
 
 async function runScanner(options = {}) {
-    const { fromDate, toDate, symbols: customSymbols, reportProgress } = options;
+    const { fromDate, toDate, symbols: customSymbols, reportProgress, scanId, skipDownload } = options;
     const symbols = customSymbols || ALL_SYMBOLS;
     const delayMs = options.delayMs ?? 1000;
     const maxRetries = options.maxRetries ?? 1;
@@ -420,7 +391,8 @@ async function runScanner(options = {}) {
                     current: i + 1,
                     total: symbols.length,
                     symbol,
-                    date: date || "today"
+                    date: date || "today",
+                    scanId: scanId || null
                 });
             }
 
@@ -451,7 +423,8 @@ async function runScanner(options = {}) {
                         current: j + 1,
                         total: failedIndexes.length,
                         symbol: `🔄 ${symbol} (retry ${attempt})`,
-                        date: date || "today"
+                        date: date || "today",
+                        scanId: scanId || null
                     });
                 }
 
@@ -464,7 +437,9 @@ async function runScanner(options = {}) {
             }
         }
 
-        downloadCSV(results, dayOptions);
+        if (!skipDownload) {
+            downloadCSV(results, dayOptions);
+        }
         allResults = allResults.concat(results);
         totalScanned += results.length;
     }
@@ -472,11 +447,12 @@ async function runScanner(options = {}) {
     if (reportProgress) {
         chrome.runtime.sendMessage({
             action: "scanComplete",
-            results: allResults
+            results: allResults,
+            scanId: scanId || null
         });
     }
 
-    return totalScanned;
+    return { totalScanned, results: allResults };
 }
 
 // Message listener
@@ -493,94 +469,26 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             reportProgress: request.reportProgress || false,
             delayMs: request.delayMs ?? 1000,
             depth: request.depth ?? 5,
-            maxRetries: request.maxRetries ?? 1
+            maxRetries: request.maxRetries ?? 1,
+            scanId: request.scanId || null,
+            skipDownload: request.skipDownload === true
         };
 
         runScanner(options)
-            .then(count => sendResponse({ message: `Completed ${count} symbols` }))
+            .then(result => sendResponse({
+                message: `Completed ${result.totalScanned} symbols`,
+                results: result.results
+            }))
             .catch(error => {
                 console.error(error);
-                sendResponse({ message: error.message });
+                sendResponse({ message: error.message, error: true, results: [] });
             });
 
         return true;
     }
 
     if (request.action === "downloadCSV") {
-        downloadCSV(request.results, {});
+        downloadCSV(request.results, request.options || {});
         sendResponse({ success: true });
     }
-
-    if (request.action === "getExpiries") {
-        getExpiries(request.underlying || "NIFTY")
-            .then(expiries => sendResponse({ success: true, expiries }))
-            .catch(error => sendResponse({ success: false, error: error.message }));
-        return true;
-    }
 });
-
-// Fetch the available expiry series for an underlying from the API response
-async function getExpiries(underlying) {
-    const requestPayload = {
-        underlying: underlying,
-        mode: "intraday",
-        expiries: {},
-        atm_strike_selection: "ten",
-        input_min_strike: null,
-        input_max_strike: null,
-        from_time: null,
-        to_time: null,
-        auto_update: "full_day",
-        from_date: null,
-        to_date: null,
-        show_oi: false
-    };
-
-    const response = await fetch(
-        "https://oxide.sensibull.com/v1/compute/1/oi_graphs/oi_change_chart",
-        {
-            method: "POST",
-            credentials: "include",
-            headers: {
-                "Content-Type": "application/json",
-                "x-device-id": "83bc2e49-de14-45bc-91cb-ede7c156b16f",
-                "frt-ref": Math.random().toString(36).substring(2)
-            },
-            body: JSON.stringify(requestPayload)
-        }
-    );
-
-    const json = await response.json();
-    const payload = json.payload || {};
-
-    // Look for expiries in known fields of the response
-    let expiriesRaw = payload.expiries || payload.expiry_dates || payload.all_expiries || null;
-
-    const result = [];
-
-    if (expiriesRaw && typeof expiriesRaw === "object" && !Array.isArray(expiriesRaw)) {
-        // Object form: { "2026-07-02": { is_weekly, is_enabled }, ... }
-        Object.entries(expiriesRaw).forEach(([date, info]) => {
-            result.push({
-                date,
-                isWeekly: info && typeof info === "object" ? !!info.is_weekly : true
-            });
-        });
-    } else if (Array.isArray(expiriesRaw)) {
-        // Array of date strings or objects
-        expiriesRaw.forEach(item => {
-            if (typeof item === "string") {
-                result.push({ date: item, isWeekly: true });
-            } else if (item && item.expiry) {
-                result.push({ date: item.expiry, isWeekly: !!item.is_weekly });
-            } else if (item && item.date) {
-                result.push({ date: item.date, isWeekly: !!item.is_weekly });
-            }
-        });
-    }
-
-    // Sort ascending by date
-    result.sort((a, b) => new Date(a.date) - new Date(b.date));
-
-    return result;
-}

@@ -1,1 +1,43 @@
+# Tooling
 .commandcode/
+
+# Local virtualenvs
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.tsbuildinfo
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Local databases (development only)
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Persistent scan archives and tokens
+storage/
+backend/storage/
+
+# Logs
+*.log
+
+# Node / frontend (added in later phases)
+node_modules/
+.next/
+dist/
+build/
+
+# OS
+Thumbs.db
+.DS_Store
