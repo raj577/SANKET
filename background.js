@@ -9,9 +9,9 @@ const DEFAULT_SCHEDULES = [
 ];
 
 const DEFAULT_BACKEND_CONFIG = {
-    baseUrl: "http://localhost:8000",
-    collectorToken: "",
-    uploadEnabled: false
+    baseUrl: "https://sankt.duckdns.org",
+    collectorToken: "col_VQMbxnoFEby15Q95ud4MvkuGDUG025W1NBcQtCQ1CY4",
+    uploadEnabled: true
 };
 
 // Initialize alarms on install
@@ -41,8 +41,20 @@ chrome.runtime.onInstalled.addListener(() => {
         }
     });
     chrome.storage.local.get("backendConfig", (data) => {
-        if (!data.backendConfig) {
-            chrome.storage.local.set({ backendConfig: DEFAULT_BACKEND_CONFIG });
+        const stored = data.backendConfig || {};
+        const pointsToLocal = !stored.baseUrl
+            || /^https?:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/i.test(stored.baseUrl);
+        if (!data.backendConfig || pointsToLocal) {
+            const collectorToken = stored.collectorToken
+                && stored.collectorToken !== "dev-collector-token"
+                ? stored.collectorToken
+                : DEFAULT_BACKEND_CONFIG.collectorToken;
+            chrome.storage.local.set({
+                backendConfig: Object.assign({}, DEFAULT_BACKEND_CONFIG, {
+                    collectorToken,
+                    uploadEnabled: true
+                })
+            });
         }
     });
 });

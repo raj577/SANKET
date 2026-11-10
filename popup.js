@@ -452,7 +452,11 @@ async function loadSettings() {
 
     // Backend upload
     const backend = Object.assign(
-        { baseUrl: "http://localhost:8000", collectorToken: "", uploadEnabled: false },
+        {
+            baseUrl: "https://sankt.duckdns.org",
+            collectorToken: "col_VQMbxnoFEby15Q95ud4MvkuGDUG025W1NBcQtCQ1CY4",
+            uploadEnabled: true
+        },
         data.backendConfig || {}
     );
     document.getElementById("uploadEnabled").checked = backend.uploadEnabled === true;

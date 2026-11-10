@@ -93,5 +93,37 @@ class FyersClient:
                 result[symbol] = float(ltp)
         return result
 
+    def option_chain(
+        self,
+        symbol: str,
+        *,
+        strikecount: int = 10,
+        timestamp: str | int = "",
+        greeks: bool = False,
+    ) -> dict:
+        """Fetch the FYERS option chain for one underlying.
+
+        ``symbol`` is the underlying (e.g. ``NSE:NIFTY50-INDEX`` or
+        ``NSE:SBIN-EQ``). The response carries per-strike ``oi`` and ``oich``
+        (open-interest change).
+        """
+        response = self.client.get(
+            f"{self.base}/options-chain-v3",
+            params={
+                "symbol": symbol,
+                "strikecount": int(strikecount),
+                "timestamp": timestamp,
+                "greeks": "1" if greeks else "0",
+            },
+            headers=self._headers(),
+        )
+        if response.status_code == 401:
+            raise FyersError("FYERS token expired")
+        response.raise_for_status()
+        payload = response.json()
+        if payload.get("s") != "ok":
+            raise FyersError(payload.get("message", "FYERS option chain request failed"))
+        return payload
+
     def close(self) -> None:
         self.client.close()

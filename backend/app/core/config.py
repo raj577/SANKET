@@ -84,6 +84,8 @@ class Settings(BaseSettings):
     market_data_provider: str = "fyers"  # "fyers" | "kotak"
     market_data_transport: str = "websocket"  # "websocket" | "rest"
     market_data_tick_throttle_seconds: float = 2.0
+    # Option-chain provider used by the admin OI scan (independent of LTP tracking).
+    scanner_data_provider: str = "fyers"  # "fyers" | "kotak"
 
     # --- Kotak Neo --------------------------------------------------------
     # REST quotes and the scrip master only need the consumer key. The SFeed
@@ -121,6 +123,14 @@ class Settings(BaseSettings):
         value = value.lower().strip()
         if value not in {"fyers", "kotak"}:
             raise ValueError("market_data_provider must be 'fyers' or 'kotak'")
+        return value
+
+    @field_validator("scanner_data_provider")
+    @classmethod
+    def _known_scanner_provider(cls, value: str) -> str:
+        value = value.lower().strip()
+        if value not in {"fyers", "kotak"}:
+            raise ValueError("scanner_data_provider must be 'fyers' or 'kotak'")
         return value
 
     @field_validator("market_data_transport")

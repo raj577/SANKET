@@ -1,30 +1,35 @@
-"""Build scanner CSVs from Kotak option-chain data.
+"""Build scanner CSVs from Kotak or FYERS option-chain data.
 
-The scanner consumes signed OI *changes*. Kotak's option-chain payload exposes
-``oi.current`` and ``oi.previous``; the ``oi.chg``/``chgPct`` fields are the
-option's price change (verified against ``quote.ltp - quote.prevClose``), not
-OI change, so they must not be used here.
-
-Requires only the Kotak consumer key; no TOTP/MPIN session is needed.
+Both providers normalize to the same scanner columns. The filter itself still
+runs server-side through ``scan_service.handle_csv_upload``.
 """
 from __future__ import annotations
 
-import csv
-import io
 import time
 import uuid
+from datetime import date, datetime, time as time_of_day
 
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.logging import get_logger
+from app.core.timeutils import IST
 from app.db.session import get_sessionmaker
+from app.market_data.fyers_client import FyersClient, FyersError
 from app.market_data.kotak_client import KotakClient, KotakError, normalize_symbol
 from app.services import scan_service
+from app.services.oi_scan_builder import (
+    build_candidate_row as _build_row,
+    build_headers,
+    rows_to_csv,
+)
 
 logger = get_logger(__name__)
 
 MAX_SYMBOLS = 250
 REQUEST_PAUSE_SECONDS = 0.05
+
+__all__ = ["build_candidate_row", "build_headers", "rows_to_csv", "solve_symbols", "run_scan_job"]
 
 
 def _moneyness(value) -> str:
@@ -40,7 +45,10 @@ def _number(value) -> float | None:
         return None
 
 
-def _entry(item: dict) -> dict | None:
+# --------------------------------------------------------------------------- Kotak
+
+
+def _kotak_entry(item: dict) -> dict | None:
     instrument = item.get("instrument") or item.get("inst") or {}
     quote = item.get("quote") or {}
     oi = item.get("openInterest") or item.get("oi") or {}
@@ -50,23 +58,22 @@ def _entry(item: dict) -> dict | None:
     option_type = str(
         instrument.get("optionType") or instrument.get("optType") or ""
     ).upper()
-    current = oi.get("current", oi.get("cur"))
-    previous = oi.get("previous", oi.get("prev"))
-    current_value = _number(current)
-    previous_value = _number(previous)
-    if current_value is None or previous_value is None:
+    current = _number(oi.get("current", oi.get("cur")))
+    previous = _number(oi.get("previous", oi.get("prev")))
+    if current is None or previous is None:
         return None
     return {
         "strike": strike,
         "type": option_type,
         "moneyness": _moneyness(instrument.get("moneyness")),
-        "oi": current_value,
-        "oi_change": current_value - previous_value,
+        "oi": current,
+        # Kotak's oi.chg/chgPct are the option's price change, not OI change.
+        "oi_change": current - previous,
         "ltp": _number(quote.get("ltp")),
     }
 
 
-def _chain_payload(response) -> dict:
+def _kotak_payload(response) -> dict:
     if not isinstance(response, dict):
         raise KotakError("Kotak option chain returned an unexpected response")
     if str(response.get("stat") or "").lower() == "not_ok":
@@ -79,120 +86,99 @@ def _chain_payload(response) -> dict:
     return data
 
 
-def _nearest(strikes: list[float], reference: float) -> float | None:
-    return min(strikes, key=lambda value: abs(value - reference)) if strikes else None
-
-
-def _cell(value: float) -> float | int:
-    number = float(value)
-    return int(number) if number.is_integer() else number
-
-
-def _bucket(
-    side: dict[float, dict], atm: float, depth: int, *, calls: bool
-) -> tuple[dict[int, dict], dict[int, dict]]:
-    strikes = sorted(side)
-    if calls:
-        itm_strikes = [strike for strike in reversed(strikes) if strike < atm][:depth]
-        otm_strikes = [strike for strike in strikes if strike > atm][:depth]
-    else:
-        itm_strikes = [strike for strike in strikes if strike > atm][:depth]
-        otm_strikes = [strike for strike in reversed(strikes) if strike < atm][:depth]
-    itm = {index + 1: side[strike] for index, strike in enumerate(itm_strikes)}
-    otm = {index + 1: side[strike] for index, strike in enumerate(otm_strikes)}
-    return itm, otm
-
-
-def build_candidate_row(
-    symbol: str, spot: float, chain: dict, depth: int = 5
-) -> dict | None:
-    """Convert one option-chain payload into the scanner's CSV column names."""
+def _parse_kotak_chain(response) -> tuple[dict[float, dict], dict[float, dict]]:
+    data = _kotak_payload(response)
     calls: dict[float, dict] = {}
     puts: dict[float, dict] = {}
-    for item in chain.get("call") or []:
-        entry = _entry(item)
+    for item in data.get("call") or []:
+        entry = _kotak_entry(item)
         if entry and entry["type"] in {"", "CE"}:
             calls[entry["strike"]] = entry
-    for item in chain.get("put") or []:
-        entry = _entry(item)
+    for item in data.get("put") or []:
+        entry = _kotak_entry(item)
         if entry and entry["type"] in {"", "PE"}:
             puts[entry["strike"]] = entry
-    if not calls or not puts:
-        return None
-
-    atm_rows = [entry for entry in calls.values() if entry["moneyness"] == "atm"]
-    atm = atm_rows[0]["strike"] if atm_rows else _nearest(sorted(calls), spot)
-    if atm is None or atm not in calls or atm not in puts:
-        return None
-
-    ce_itm, ce_otm = _bucket(calls, atm, depth, calls=True)
-    pe_itm, pe_otm = _bucket(puts, atm, depth, calls=False)
-    if any(len(bucket) < depth for bucket in (ce_itm, ce_otm, pe_itm, pe_otm)):
-        return None
-
-    total_call = sum(entry["oi"] for entry in calls.values())
-    total_put = sum(entry["oi"] for entry in puts.values())
-    pcr = round(total_put / total_call, 2) if total_call else ""
-
-    row: dict[str, object] = {
-        "Symbol": symbol,
-        "Spot": spot,
-        "PCR": pcr,
-        "ATM_Strike": _cell(atm),
-        "ATM_CallOI": _cell(calls[atm]["oi_change"]),
-        "ATM_PutOI": _cell(puts[atm]["oi_change"]),
-    }
-    for index, entry in ce_itm.items():
-        row[f"CE_ITM{index}_Strike"] = _cell(entry["strike"])
-        row[f"CE_ITM{index}_CallOI"] = _cell(entry["oi_change"])
-    for index, entry in ce_otm.items():
-        row[f"CE_OTM{index}_Strike"] = _cell(entry["strike"])
-        row[f"CE_OTM{index}_CallOI"] = _cell(entry["oi_change"])
-    for index, entry in pe_itm.items():
-        row[f"PE_ITM{index}_Strike"] = _cell(entry["strike"])
-        row[f"PE_ITM{index}_PutOI"] = _cell(entry["oi_change"])
-    for index, entry in pe_otm.items():
-        row[f"PE_OTM{index}_Strike"] = _cell(entry["strike"])
-        row[f"PE_OTM{index}_PutOI"] = _cell(entry["oi_change"])
-
-    row["ITM_PE_Total"] = _cell(sum(pe_itm[i]["oi_change"] for i in pe_itm))
-    row["OTM_PE_Total"] = _cell(sum(pe_otm[i]["oi_change"] for i in pe_otm))
-    row["ITM_CE_Total"] = _cell(sum(ce_itm[i]["oi_change"] for i in ce_itm))
-    row["OTM_CE_Total"] = _cell(sum(ce_otm[i]["oi_change"] for i in ce_otm))
-    return row
+    return calls, puts
 
 
-def build_headers(depth: int) -> list[str]:
-    headers = ["Symbol", "Spot", "PCR", "ATM_Strike", "ATM_CallOI", "ATM_PutOI"]
-    for index in range(1, depth + 1):
-        headers.extend([f"CE_ITM{index}_Strike", f"CE_ITM{index}_CallOI"])
-    for index in range(1, depth + 1):
-        headers.extend([f"CE_OTM{index}_Strike", f"CE_OTM{index}_CallOI"])
-    for index in range(1, depth + 1):
-        headers.extend([f"PE_ITM{index}_Strike", f"PE_ITM{index}_PutOI"])
-    for index in range(1, depth + 1):
-        headers.extend([f"PE_OTM{index}_Strike", f"PE_OTM{index}_PutOI"])
-    headers.extend(
-        [
-            "ITM_PE_Total",
-            "ITM_CE_Total",
-            "OTM_PE_Total",
-            "OTM_CE_Total",
-            "SupportMigration",
-            "ResistanceMigration",
-        ]
+# --------------------------------------------------------------------------- FYERS
+
+
+def _parse_fyers_chain(response) -> tuple[dict[float, dict], dict[float, dict]]:
+    if not isinstance(response, dict) or response.get("s") != "ok":
+        message = response.get("message") if isinstance(response, dict) else None
+        raise FyersError(message or "FYERS option chain request failed")
+    data = response.get("data") if isinstance(response.get("data"), dict) else response
+    rows = (
+        data.get("optionsChain")
+        or data.get("options_chain")
+        or data.get("optionschain")
+        or []
     )
-    return headers
+    calls: dict[float, dict] = {}
+    puts: dict[float, dict] = {}
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        option_type = str(
+            item.get("option_type") or item.get("optionType") or ""
+        ).upper()
+        strike = _number(
+            item.get("strike_price") or item.get("strikePrice") or item.get("strike")
+        )
+        if strike is None or option_type not in {"CE", "PE"}:
+            continue
+        oi = _number(item.get("oi") or item.get("open_interest") or item.get("openInterest")) or 0.0
+        change = _number(
+            item.get("oich")
+            or item.get("oi_change")
+            or item.get("oiChange")
+            or item.get("change_in_oi")
+        )
+        if change is None:
+            previous = _number(
+                item.get("previous_oi")
+                or item.get("prev_oi")
+                or item.get("previousOpenInterest")
+            )
+            change = oi - previous if previous is not None else 0.0
+        entry = {
+            "strike": strike,
+            "type": option_type,
+            "moneyness": _moneyness(item.get("moneyness")),
+            "oi": oi,
+            # FYERS exposes the day's OI change directly as ``oich``.
+            "oi_change": change,
+            "ltp": _number(item.get("ltp")),
+        }
+        (calls if option_type == "CE" else puts)[strike] = entry
+    return calls, puts
 
 
-def rows_to_csv(rows: list[dict], depth: int) -> bytes:
-    headers = build_headers(depth)
-    buffer = io.StringIO()
-    writer = csv.DictWriter(buffer, fieldnames=headers, extrasaction="ignore")
-    writer.writeheader()
-    for row in rows:
-        writer.writerow(row)
-    return buffer.getvalue().encode("utf-8")
+def build_candidate_row(symbol: str, spot: float, chain: dict, depth: int = 5) -> dict | None:
+    """Backward-compatible Kotak chain wrapper used by the tests."""
+    calls, puts = _parse_kotak_chain(chain)
+    return _build_row(symbol, float(spot), calls, puts, depth)
+
+
+# --------------------------------------------------------------------------- runner
+
+
+def _fyers_timestamp(expiry: str | None) -> str | int:
+    if not expiry:
+        return ""
+    try:
+        day = date.fromisoformat(expiry)
+    except ValueError:
+        return expiry
+    close = datetime.combine(day, time_of_day(15, 30), tzinfo=IST)
+    return int(close.timestamp())
+
+
+def _fyers_symbol(symbol: str) -> str:
+    from app.workers.price_tracker_worker import to_fyers_symbol
+
+    return to_fyers_symbol(symbol)
 
 
 def solve_symbols(db: Session, symbols: list[str] | None) -> list[str]:
@@ -210,21 +196,62 @@ def solve_symbols(db: Session, symbols: list[str] | None) -> list[str]:
     return list(dict.fromkeys(resolved))[:MAX_SYMBOLS]
 
 
+def _provider(name: str | None) -> str:
+    selected = (name or get_settings().scanner_data_provider or "fyers").lower()
+    return selected if selected in {"fyers", "kotak"} else "fyers"
+
+
 def run_scan_job(
     scan_id: uuid.UUID,
     symbols: list[str],
     depth: int,
     expiry: str | None,
+    provider: str | None = None,
 ) -> None:
-    """Background job: fetch Kotak option chains and run the existing scanner."""
+    """Background job: fetch option-chain OI data and run the existing scanner."""
+    source = _provider(provider)
     session = get_sessionmaker()()
-    client = KotakClient()
+    client = None
     try:
         scan = scan_service.get_scan(session, scan_id)
         scan.status = "RUNNING"
         session.commit()
 
-        spots = client.ltp_map(symbols)
+        if source == "kotak":
+            kotak = KotakClient()
+            if not kotak.configured:
+                raise KotakError("Kotak consumer key is not configured")
+            spots = kotak.ltp_map(symbols)
+            fetch_chain = lambda symbol: kotak.sdk().option_chain(
+                exchange="nse_fo",
+                underlying=symbol,
+                expiry=expiry or None,
+                instrument_type="option",
+                count=max(depth * 4, 40),
+            )
+            parse_chain = _parse_kotak_chain
+            client = kotak
+        else:
+            fyers = FyersClient()
+            if not fyers.configured:
+                raise FyersError(
+                    "FYERS is not configured; connect FYERS in admin settings or set FYERS_ACCESS_TOKEN"
+                )
+            fyers_symbols = {symbol: _fyers_symbol(symbol) for symbol in symbols}
+            raw_spots = fyers.ltp_map(list(fyers_symbols.values()))
+            spots = {
+                symbol: raw_spots.get(fyers_symbol)
+                for symbol, fyers_symbol in fyers_symbols.items()
+            }
+            timestamp = _fyers_timestamp(expiry)
+            fetch_chain = lambda symbol: fyers.option_chain(
+                fyers_symbols[symbol],
+                strikecount=max(depth, 5),
+                timestamp=timestamp,
+            )
+            parse_chain = _parse_fyers_chain
+            client = fyers
+
         rows: list[dict] = []
         failed = 0
         warnings: list[str] = []
@@ -241,18 +268,11 @@ def run_scan_job(
             spot = spots.get(symbol)
             if spot is None:
                 failed += 1
-                warnings.append(f"{symbol}: no equity quote")
+                warnings.append(f"{symbol}: no underlying quote")
                 continue
             try:
-                response = client.sdk().option_chain(
-                    exchange="nse_fo",
-                    underlying=symbol,
-                    expiry=expiry or None,
-                    instrument_type="option",
-                    count=max(depth * 4, 40),
-                )
-                chain = _chain_payload(response)
-                row = build_candidate_row(symbol, float(spot), chain, depth)
+                calls, puts = parse_chain(fetch_chain(symbol))
+                row = _build_row(symbol, float(spot), calls, puts, depth)
             except Exception as exc:  # noqa: BLE001 - one symbol must not stop the scan
                 failed += 1
                 warnings.append(f"{symbol}: {exc}")
@@ -272,7 +292,7 @@ def run_scan_job(
                 status="FAILED",
                 successful_symbols=0,
                 failed_symbols=failed,
-                error_message="; ".join(warnings[:20]) or "No Kotak option-chain rows",
+                error_message="; ".join(warnings[:20]) or "No option-chain rows",
             )
             return
 
@@ -289,7 +309,9 @@ def run_scan_job(
             scan.error_message = "; ".join(warnings[:20])
             session.commit()
     except Exception as exc:  # noqa: BLE001 - never leave the scan stuck
-        logger.exception("kotak_scan_failed", extra={"scan_id": str(scan_id)})
+        logger.exception(
+            "oi_scan_failed", extra={"scan_id": str(scan_id), "provider": source}
+        )
         try:
             scan = scan_service.get_scan(session, scan_id)
             scan_service.complete_scan(
@@ -298,4 +320,9 @@ def run_scan_job(
         except Exception:  # noqa: BLE001
             session.rollback()
     finally:
+        if client is not None:
+            try:
+                client.close()
+            except Exception:  # noqa: BLE001
+                pass
         session.close()

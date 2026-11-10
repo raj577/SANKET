@@ -38,7 +38,7 @@ export default function ScansPage() {
     return () => window.clearInterval(timer);
   }, [data, reload]);
 
-  async function runKotakScan() {
+  async function runOiScan() {
     setStarting(true);
     setStartError(null);
     setStartMessage(null);
@@ -47,7 +47,7 @@ export default function ScansPage() {
       .map((item) => item.trim().toUpperCase())
       .filter(Boolean);
     try {
-      const scan = await api.post<Scan>("/admin/scans/kotak", {
+      const scan = await api.post<Scan>("/admin/scans/oi", {
         symbols: parsed.length ? parsed : null,
         depth,
         expiry: expiry || null
@@ -56,7 +56,7 @@ export default function ScansPage() {
       setPage(1);
       reload();
     } catch (err) {
-      setStartError(err instanceof Error ? err.message : "Unable to start the Kotak scan");
+      setStartError(err instanceof Error ? err.message : "Unable to start the OI scan");
     } finally {
       setStarting(false);
     }
@@ -90,7 +90,7 @@ export default function ScansPage() {
   return (
     <>
       <Card
-        title="Run Kotak scan"
+        title="Run OI scan"
         actions={<Badge tone="blue">No extension</Badge>}
       >
         <div className="filters" style={{ marginBottom: 14 }}>
@@ -116,16 +116,17 @@ export default function ScansPage() {
             <input type="date" value={expiry} onChange={(event) => setExpiry(event.target.value)} />
           </Field>
           <div className="flex" style={{ alignItems: "flex-end" }}>
-            <button className="btn" onClick={runKotakScan} disabled={starting}>
-              {starting ? "Starting…" : "Run Kotak scan"}
+            <button className="btn" onClick={runOiScan} disabled={starting}>
+              {starting ? "Starting…" : "Run OI scan"}
             </button>
           </div>
         </div>
         {startMessage ? <div className="success-text">{startMessage}</div> : null}
         <ErrorText error={startError} />
         <div className="muted small">
-          Fetches Kotak option-chain OI changes and runs the same versioned filter. The
-          generated CSV is archived like an extension upload.
+          Fetches FYERS option-chain OI changes and runs the same versioned filter. The
+          generated CSV is archived like an extension upload. FYERS must be connected
+          under Settings first.
         </div>
       </Card>
 

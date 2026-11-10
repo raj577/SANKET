@@ -1,7 +1,7 @@
 {
     "manifest_version": 3,
     "name": "Sensibull OI Scanner",
-    "version": "3.1",
+    "version": "3.3",
     "permissions": [
         "activeTab",
         "downloads",
@@ -16,6 +16,7 @@
         "https://api.telegram.org/*",
         "https://sheets.googleapis.com/*",
         "https://accounts.google.com/*",
+        "https://sankt.duckdns.org/*",
         "http://localhost:8000/*",
         "http://127.0.0.1:8000/*"
     ],

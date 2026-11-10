@@ -34,6 +34,7 @@ class KotakScanRequest(ORMModel):
     symbols: list[str] | None = None
     depth: int = Field(default=5, ge=3, le=10)
     expiry: str | None = Field(default=None, max_length=10)
+    provider: str | None = Field(default=None, max_length=16)
 
 
 class ScanCsvSummary(ORMModel):

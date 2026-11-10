@@ -190,32 +190,30 @@ def list_scans(
     return _page([scan_out(scan) for scan in scans], total, page, page_size)
 
 
-@router.post("/scans/kotak", response_model=ScanOut, status_code=202)
-def start_kotak_scan(
+def _start_oi_scan(
     payload: KotakScanRequest,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-    user: User = Depends(require_admin),
+    db: Session,
+    user: User,
+    provider: str | None = None,
 ) -> ScanOut:
-    """Run the scanner directly from Kotak option-chain data.
-
-    The browser extension is not involved; only the Kotak consumer key is
-    needed. The job runs after the response and archives the generated CSV.
-    """
     symbols = kotak_scan_service.solve_symbols(db, payload.symbols)
     if not symbols:
-        raise ValidationError(
-            "No symbols supplied and the saved watchlist is empty"
-        )
+        raise ValidationError("No symbols supplied and the saved watchlist is empty")
+    source = (provider or payload.provider or "").lower() or None
     scan = scan_service.create_scan(
-        db, total_symbols=len(symbols), trigger="kotak"
+        db, total_symbols=len(symbols), trigger=source or "oi"
     )
     audit_service.record(
         db,
         action="SCAN_STARTED",
         entity_type="scan_run",
         entity_id=str(scan.id),
-        details={"source": "kotak", "symbols": len(symbols), "depth": payload.depth},
+        details={
+            "source": source or "configured",
+            "symbols": len(symbols),
+            "depth": payload.depth,
+        },
         user=user,
     )
     db.commit()
@@ -225,8 +223,31 @@ def start_kotak_scan(
         symbols,
         payload.depth,
         payload.expiry,
+        source,
     )
     return scan_out(scan)
+
+
+@router.post("/scans/oi", response_model=ScanOut, status_code=202)
+def start_oi_scan(
+    payload: KotakScanRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+) -> ScanOut:
+    """Run the OI scanner from option-chain data (FYERS by default)."""
+    return _start_oi_scan(payload, background_tasks, db, user, payload.provider)
+
+
+@router.post("/scans/kotak", response_model=ScanOut, status_code=202)
+def start_kotak_scan(
+    payload: KotakScanRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+) -> ScanOut:
+    """Deprecated alias that always uses Kotak option-chain data."""
+    return _start_oi_scan(payload, background_tasks, db, user, "kotak")
 
 
 @router.get("/scans/{scan_id}", response_model=ScanDetailOut)
