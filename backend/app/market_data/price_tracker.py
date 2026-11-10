@@ -67,6 +67,7 @@ def apply_price_tick(
     event = evaluate_threshold(signal.direction, value, signal.target_price, signal.stop_loss)
     if event is not None:
         signal.status = event
+        signal.closed_at = observed_at
         if event == TARGET_HIT:
             signal.target_hit_at = observed_at
         else:

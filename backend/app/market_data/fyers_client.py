@@ -58,6 +58,10 @@ class FyersClient:
         self.token = access_token or settings.fyers_access_token or FyersTokenStore().load()
         self.client = httpx.Client(timeout=timeout)
 
+    @property
+    def configured(self) -> bool:
+        return bool(self.app_id and self.token)
+
     def _headers(self) -> dict[str, str]:
         if not self.app_id or not self.token:
             raise FyersError("FYERS is not configured")

@@ -90,6 +90,7 @@ def test_tracker_updates_price_and_detects_target(client, db_session):
     assert refreshed.status == "TARGET_HIT"
     assert refreshed.current_ltp == Decimal("106.0000")
     assert refreshed.target_hit_at is not None
+    assert refreshed.closed_at is not None
 
     # Terminal signals are not updated again.
     again = run_once(db_session, FakeClient({"NSE:WIPRO-EQ": 120.0}), now=utcnow())

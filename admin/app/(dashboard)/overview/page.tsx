@@ -54,15 +54,20 @@ export default function OverviewPage() {
               </Badge>
               <span className="muted small"> The extension needs a collector token.</span>
             </dd>
-            <dt>FYERS market data</dt>
+            <dt>Market data</dt>
             <dd>
-              <Badge tone={overview.data?.fyers_status === "CONFIGURED" ? "green" : "amber"}>
-                {overview.data?.fyers_status === "CONFIGURED" ? "Configured" : "Not configured"}
+              <Badge tone={overview.data?.market_data_status === "CONFIGURED" ? "green" : "amber"}>
+                {overview.data?.market_data_status === "CONFIGURED" ? "Configured" : "Not configured"}
               </Badge>
-              <span className="muted small"> Prices appear only after a live quote is observed.</span>
+              <span className="muted small">
+                {" "}
+                {overview.data?.market_data_provider ?? "FYERS"} ·{" "}
+                {overview.data?.stream_transport === "websocket" ? "SFeed websocket" : "REST quotes"}.
+                Prices appear only after a live quote is observed.
+              </span>
             </dd>
             <dt>Price freshness rule</dt>
-            <dd className="muted small">UNKNOWN until FYERS returns an LTP; LIVE, DELAYED and STALE follow the configured poll windows.</dd>
+            <dd className="muted small">UNKNOWN until the provider returns an LTP; LIVE, DELAYED and STALE follow the configured poll windows.</dd>
           </dl>
         </Card>
 

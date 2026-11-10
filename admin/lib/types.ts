@@ -126,6 +126,9 @@ export interface DashboardOverview {
   csv_archive_count: number;
   collector_status: string;
   fyers_status: string;
+  market_data_provider: string;
+  market_data_status: string;
+  stream_transport: string;
 }
 
 export interface AuditLog {
@@ -148,6 +151,8 @@ export interface SettingsResponse {
 export interface MarketStatus {
   provider: string;
   configured: boolean;
+  stream_ready: boolean;
+  transport: string;
   tracking_enabled: boolean;
   poll_interval_seconds: number;
   active_signals: number;

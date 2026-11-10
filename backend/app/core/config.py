@@ -80,6 +80,25 @@ class Settings(BaseSettings):
     price_stale_after_seconds: int = 300
     tracking_poll_seconds: int = 15
 
+    # --- Market data provider --------------------------------------------
+    market_data_provider: str = "fyers"  # "fyers" | "kotak"
+    market_data_transport: str = "websocket"  # "websocket" | "rest"
+    market_data_tick_throttle_seconds: float = 2.0
+
+    # --- Kotak Neo --------------------------------------------------------
+    # REST quotes and the scrip master only need the consumer key. The SFeed
+    # websocket additionally needs a TOTP/MPIN session (mobile, UCC, MPIN and
+    # the registered TOTP secret).
+    kotak_consumer_key: str | None = None
+    kotak_mobile_number: str | None = None
+    kotak_ucc: str | None = None
+    kotak_mpin: str | None = None
+    kotak_totp_secret: str | None = None
+    kotak_environment: str = "prod"
+    kotak_scrip_cache_path: str = "storage/kotak_scrip_nse_cm.csv"
+    kotak_quote_type: str = "ltp"
+    kotak_stream_refresh_seconds: int = 60
+
     # --- Rate limiting (single-process, best effort) ----------------------
     rate_limit_enabled: bool = True
     rate_limit_per_minute: int = 120
@@ -94,6 +113,22 @@ class Settings(BaseSettings):
         value = value.lower().strip()
         if value not in {"local", "s3"}:
             raise ValueError("storage_backend must be 'local' or 's3'")
+        return value
+
+    @field_validator("market_data_provider")
+    @classmethod
+    def _known_provider(cls, value: str) -> str:
+        value = value.lower().strip()
+        if value not in {"fyers", "kotak"}:
+            raise ValueError("market_data_provider must be 'fyers' or 'kotak'")
+        return value
+
+    @field_validator("market_data_transport")
+    @classmethod
+    def _known_transport(cls, value: str) -> str:
+        value = value.lower().strip()
+        if value not in {"websocket", "rest"}:
+            raise ValueError("market_data_transport must be 'websocket' or 'rest'")
         return value
 
     @model_validator(mode="after")

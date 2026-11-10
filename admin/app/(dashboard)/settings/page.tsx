@@ -32,6 +32,8 @@ export default function SettingsPage() {
   const [authBusy, setAuthBusy] = useState(false);
   const [authMessage, setAuthMessage] = useState<string | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
+  const provider = (market.data?.provider ?? "FYERS").toUpperCase();
+  const isFyers = provider === "FYERS";
 
   useEffect(() => {
     if (data) setSettings(data.settings);
@@ -118,7 +120,7 @@ export default function SettingsPage() {
       <ErrorText error={error || saveError || market.error} />
 
       <Card
-        title="FYERS connection"
+        title={`${provider} connection`}
         actions={
           <Badge tone={market.data?.configured ? "green" : "amber"}>
             {market.data?.configured ? "Connected" : "Not connected"}
@@ -128,6 +130,16 @@ export default function SettingsPage() {
         <dl className="kv">
           <dt>Provider</dt>
           <dd>{market.data?.provider ?? "FYERS"}</dd>
+          <dt>Transport</dt>
+          <dd>
+            {market.data?.transport === "websocket" ? "SFeed websocket" : "REST quotes"}
+          </dd>
+          <dt>Streaming session</dt>
+          <dd>
+            <Badge tone={market.data?.stream_ready ? "green" : "amber"}>
+              {market.data?.stream_ready ? "Ready" : "Not ready"}
+            </Badge>
+          </dd>
           <dt>Tracking</dt>
           <dd>{market.data?.tracking_enabled ? "Enabled" : "Disabled"}</dd>
           <dt>Poll interval</dt>
@@ -142,37 +154,46 @@ export default function SettingsPage() {
           </dd>
         </dl>
 
-        <div className="flex" style={{ marginTop: 14, justifyContent: "space-between", alignItems: "flex-end", gap: 16, flexWrap: "wrap" }}>
-          <div>
-            <button className="btn small" onClick={openFyersLogin}>
-              Connect FYERS
-            </button>
-            <div className="muted small" style={{ marginTop: 8 }}>
-              Opens the FYERS login page. After approving, the redirect stores the token on the backend.
+        {isFyers ? (
+          <div className="flex" style={{ marginTop: 14, justifyContent: "space-between", alignItems: "flex-end", gap: 16, flexWrap: "wrap" }}>
+            <div>
+              <button className="btn small" onClick={openFyersLogin}>
+                Connect FYERS
+              </button>
+              <div className="muted small" style={{ marginTop: 8 }}>
+                Opens the FYERS login page. After approving, the redirect stores the token on the backend.
+              </div>
             </div>
-          </div>
 
-          <form onSubmit={exchangeCode} style={{ display: "grid", gap: 8 }}>
-            <Field label="Or paste the auth_code from the redirect URL">
-              <input
-                value={authCode}
-                onChange={(event) => setAuthCode(event.target.value)}
-                placeholder="auth_code=…"
-                style={{ minWidth: 280 }}
-              />
-            </Field>
-            <button type="submit" className="btn ghost small" disabled={authBusy || !authCode.trim()}>
-              {authBusy ? "Exchanging…" : "Store token"}
-            </button>
-          </form>
-        </div>
+            <form onSubmit={exchangeCode} style={{ display: "grid", gap: 8 }}>
+              <Field label="Or paste the auth_code from the redirect URL">
+                <input
+                  value={authCode}
+                  onChange={(event) => setAuthCode(event.target.value)}
+                  placeholder="auth_code=…"
+                  style={{ minWidth: 280 }}
+                />
+              </Field>
+              <button type="submit" className="btn ghost small" disabled={authBusy || !authCode.trim()}>
+                {authBusy ? "Exchanging…" : "Store token"}
+              </button>
+            </form>
+          </div>
+        ) : (
+          <div className="muted small" style={{ marginTop: 12 }}>
+            Kotak Neo quotes and the scrip master use <code>KOTAK_CONSUMER_KEY</code>.
+            The SFeed websocket additionally needs <code>KOTAK_MOBILE_NUMBER</code>,{" "}
+            <code>KOTAK_UCC</code>, <code>KOTAK_MPIN</code> and <code>KOTAK_TOTP_SECRET</code>.
+            Set them in <code>backend/.env</code> and restart the backend.
+          </div>
+        )}
 
         {authMessage ? <div className="success-text" style={{ marginTop: 12 }}>{authMessage}</div> : null}
         <ErrorText error={authError} />
         <div className="muted small" style={{ marginTop: 10 }}>
-          FYERS access tokens expire daily (around 06:00 IST). Repeat the connection each trading day,
-          then enable tracking below. Credentials live in <code>backend/.env</code>; the token is written
-          to the configured token file and never exposed to the browser.
+          Credentials stay in <code>backend/.env</code>. Tokens/sessions are held by the backend
+          and never exposed to the browser. Target and stop-loss crossings close the signal
+          automatically.
         </div>
       </Card>
 

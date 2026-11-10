@@ -19,6 +19,7 @@ from app.core.logging import get_logger
 from app.core.timeutils import utcnow
 from app.db.session import get_sessionmaker
 from app.market_data.fyers_client import FyersClient, FyersError
+from app.market_data.kotak_client import KotakError
 from app.market_data.price_tracker import apply_price_tick
 from app.models.enums import SignalStatus
 from app.models.signal import PublishedSignal
@@ -44,6 +45,23 @@ def to_fyers_symbol(symbol: str) -> str:
     return f"NSE:{name}-EQ"
 
 
+def identity_symbol(symbol: str) -> str:
+    """Kotak quotes use the plain NSE symbol, not a ``NSE:...`` string."""
+    return symbol.strip().upper()
+
+
+def make_client(provider: str):
+    if provider == "kotak":
+        from app.market_data.kotak_client import KotakClient
+
+        return KotakClient()
+    return FyersClient()
+
+
+def symbol_mapper_for(provider: str):
+    return identity_symbol if provider == "kotak" else to_fyers_symbol
+
+
 def _chunks(items: list[str], size: int):
     for index in range(0, len(items), size):
         yield items[index : index + size]
@@ -62,6 +80,7 @@ def run_once(
     *,
     now: datetime | None = None,
     tracking_enabled: bool | None = None,
+    symbol_mapper=to_fyers_symbol,
 ) -> dict:
     market_settings = settings_service.get_value(db, "market_data")
     if tracking_enabled is None:
@@ -79,11 +98,11 @@ def run_once(
     if not signals:
         return {"updated": 0, "quotes": {}, "events": []}
 
-    symbols = sorted({to_fyers_symbol(signal.symbol) for signal in signals})
+    keys = sorted({symbol_mapper(signal.symbol) for signal in signals})
     try:
-        prices = fetch_ltps(client, symbols)
-    except FyersError as exc:
-        logger.warning("fyers_quote_failed", extra={"error": str(exc)})
+        prices = fetch_ltps(client, keys)
+    except (FyersError, KotakError) as exc:
+        logger.warning("market_data_quote_failed", extra={"error": str(exc)})
         return {"updated": 0, "quotes": {}, "events": [], "error": str(exc)}
 
     observed_at = now or utcnow()
@@ -97,8 +116,8 @@ def run_once(
     quoted: dict[str, float] = {}
 
     for signal in signals:
-        fyers_symbol = to_fyers_symbol(signal.symbol)
-        ltp = prices.get(fyers_symbol)
+        key = symbol_mapper(signal.symbol)
+        ltp = prices.get(key)
         if ltp is None:
             continue
         quoted[signal.symbol] = ltp
@@ -127,20 +146,34 @@ _warned_not_configured = False
 
 
 def _poll_once() -> dict:
-    client = FyersClient()
-    if not client.token or not client.app_id:
+    settings = get_settings()
+    provider = (settings.market_data_provider or "fyers").lower()
+    client = make_client(provider)
+    if not client.configured:
         global _warned_not_configured
         if not _warned_not_configured:
             logger.warning(
                 "price_tracker_not_configured",
-                extra={"hint": "Set FYERS credentials and exchange an auth code"},
+                extra={
+                    "provider": provider,
+                    "hint": "Set the provider credentials in backend/.env",
+                },
             )
             _warned_not_configured = True
-        return {"updated": 0, "quotes": {}, "events": [], "skipped": "fyers_not_configured"}
+        return {
+            "updated": 0,
+            "quotes": {},
+            "events": [],
+            "skipped": f"{provider}_not_configured",
+        }
 
     session = get_sessionmaker()()
     try:
-        return run_once(session, client)
+        return run_once(
+            session,
+            client,
+            symbol_mapper=symbol_mapper_for(provider),
+        )
     finally:
         session.close()
         client.close()
@@ -176,6 +209,11 @@ async def run_forever() -> None:
 
 
 def start_worker() -> asyncio.Task:
+    settings = get_settings()
+    if (settings.market_data_provider or "").lower() == "kotak":
+        from app.workers.kotak_stream_worker import run_forever as kotak_run_forever
+
+        return asyncio.create_task(kotak_run_forever(), name="kotak-price-tracker")
     return asyncio.create_task(run_forever(), name="price-tracker")
 
 

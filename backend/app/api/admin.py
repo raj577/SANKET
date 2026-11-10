@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime, timezone
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import func, select
@@ -131,17 +130,17 @@ def overview(db: Session = Depends(get_db)) -> DashboardOverview:
     ) or 0
 
     from app.core.config import get_settings
+    from app.market_data.provider import provider_status
 
     settings = get_settings()
+    provider, market_configured, stream_ready = provider_status()
     collector_configured = bool(settings.collector_bootstrap_token) or (
         db.scalar(
             select(func.count(CollectorToken.id)).where(CollectorToken.is_active.is_(True))
         )
         or 0
     ) > 0
-    fyers_configured = bool(settings.fyers_app_id) and (
-        bool(settings.fyers_access_token) or Path(settings.fyers_token_file).is_file()
-    )
+    fyers_configured = provider == "fyers" and market_configured
 
     return DashboardOverview(
         today_scans=int(today_scans),
@@ -158,6 +157,9 @@ def overview(db: Session = Depends(get_db)) -> DashboardOverview:
         csv_archive_count=int(archives),
         collector_status="CONFIGURED" if collector_configured else "NOT_CONFIGURED",
         fyers_status="CONFIGURED" if fyers_configured else "NOT_CONFIGURED",
+        market_data_provider=provider.upper(),
+        market_data_status="CONFIGURED" if market_configured else "NOT_CONFIGURED",
+        stream_transport="websocket" if stream_ready else "rest",
     )
 
 

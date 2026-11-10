@@ -41,6 +41,9 @@ class DashboardOverview(ORMModel):
     csv_archive_count: int
     collector_status: str
     fyers_status: str
+    market_data_provider: str = "FYERS"
+    market_data_status: str = "NOT_CONFIGURED"
+    stream_transport: str = "rest"
 
 
 class PriceOut(ORMModel):

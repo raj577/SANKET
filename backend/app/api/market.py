@@ -6,7 +6,6 @@ unpolled symbol returns no price rather than a fabricated one.
 from __future__ import annotations
 
 import html
-from pathlib import Path
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import HTMLResponse
@@ -20,20 +19,15 @@ from app.core.timeutils import utcnow
 from app.db.session import get_db
 from app.market_data import fyers_auth
 from app.market_data.fyers_client import FyersTokenStore
+from app.market_data.provider import provider_status
 from app.models.enums import SignalStatus
 from app.models.signal import PublishedSignal
 from app.models.user import User
 from app.schemas.admin import PriceOut
 from app.schemas.serializers import price_freshness
-from app.services import audit_service
+from app.services import audit_service, settings_service
 
 router = APIRouter(prefix="/market", tags=["market"])
-
-
-def _fyers_configured() -> bool:
-    settings = get_settings()
-    has_token = bool(settings.fyers_access_token) or Path(settings.fyers_token_file).is_file()
-    return bool(settings.fyers_app_id) and has_token
 
 
 @router.get("/status")
@@ -42,6 +36,7 @@ def market_status(
     _: User = Depends(get_current_user),
 ) -> dict:
     settings = get_settings()
+    provider, configured, stream_ready = provider_status()
     active = db.scalar(
         select(func.count(PublishedSignal.id)).where(
             PublishedSignal.status == SignalStatus.ACTIVE.value
@@ -52,10 +47,18 @@ def market_status(
             PublishedSignal.status == SignalStatus.ACTIVE.value
         )
     )
+    transport = (
+        settings.market_data_transport
+        if stream_ready and settings.market_data_transport == "websocket"
+        else "rest"
+    )
+    market_settings = settings_service.get_value(db, "market_data")
     return {
-        "provider": "FYERS",
-        "configured": _fyers_configured(),
-        "tracking_enabled": bool(settings.tracking_poll_seconds > 0),
+        "provider": provider.upper(),
+        "configured": configured,
+        "stream_ready": stream_ready,
+        "transport": transport,
+        "tracking_enabled": bool(market_settings.get("tracking_enabled", False)),
         "poll_interval_seconds": settings.tracking_poll_seconds,
         "active_signals": int(active),
         "last_price_update": freshest,
