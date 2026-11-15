@@ -72,13 +72,36 @@ class Settings(BaseSettings):
     fyers_app_id: str | None = None
     fyers_secret_key: str | None = None
     fyers_redirect_uri: str = "http://localhost:8000/api/v1/market/fyers/callback"
+    # Development override only. The normal path is the OAuth callback below,
+    # which stores the token encrypted on disk.
     fyers_access_token: str | None = None
-    fyers_token_file: str = "storage/fyers_token.json"
+    fyers_token_file: str = "storage/fyers_token.bin"
+    # Fernet key (urlsafe base64, 32 bytes). Required to store the token; there
+    # is deliberately no plaintext fallback.
+    fyers_token_encryption_key: str | None = None
+    # Lifetime of the signed OAuth state that protects the callback.
+    fyers_oauth_state_ttl_seconds: int = 300
+    # Used only when FYERS does not report an expiry (no ``expires_in`` and the
+    # access token is not a JWT with ``exp``). FYERS tokens are daily tokens.
+    fyers_token_assumed_ttl_seconds: int = 12 * 3600
     fyers_api_base: str = "https://api-t1.fyers.in/api/v3"
     fyers_data_base: str = "https://api-t1.fyers.in/data"
     price_persist_interval_seconds: int = 60
     price_stale_after_seconds: int = 300
     tracking_poll_seconds: int = 15
+
+    # --- AVWAP pattern scanner -------------------------------------------
+    # Independent from the OI scanner. Timeframes are the FYERS resolutions
+    # accepted by the detector's completed-candle logic.
+    pattern_default_timeframe: str = "60"
+    pattern_timeframes: str = "5,15,60,D"
+    pattern_lookback_days: int = 120
+    pattern_history_chunk_days: int = 60
+    # FYERS Standard plan allows 50 history requests/minute, so space them out.
+    pattern_history_pause_seconds: float = 1.3
+    pattern_max_symbols: int = 25
+    pattern_instrument_master_url: str = "https://public.fyers.in/sym_details/NSE_FO.csv"
+    pattern_instrument_cache_ttl_seconds: int = 3600
 
     # --- Market data provider --------------------------------------------
     market_data_provider: str = "fyers"  # "fyers" | "kotak"
@@ -151,6 +174,11 @@ class Settings(BaseSettings):
             if any(origin.strip() == "*" for origin in self.cors_origins_list):
                 raise ValueError("CORS_ORIGINS must not contain '*' in production")
         return self
+
+    @property
+    def pattern_timeframes_list(self) -> list[str]:
+        values = [item.strip().upper() for item in self.pattern_timeframes.split(",")]
+        return [item for item in values if item]
 
     @property
     def cors_origins_list(self) -> list[str]:

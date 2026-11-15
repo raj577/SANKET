@@ -14,6 +14,11 @@ class Direction(StrEnum):
     SHORT = "SHORT"
 
 
+class ScanType(StrEnum):
+    OI = "OI"
+    AVWAP_PATTERN = "AVWAP_PATTERN"
+
+
 class ScanStatus(StrEnum):
     PENDING = "PENDING"
     RUNNING = "RUNNING"

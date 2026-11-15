@@ -65,6 +65,33 @@ export function Empty({ message }: { message: string }) {
   return <div className="empty">{message}</div>;
 }
 
+export function ProgressBar({
+  value,
+  label,
+  tone = "blue"
+}: {
+  value: number;
+  label: string;
+  tone?: Tone;
+}) {
+  const clamped = Math.max(0, Math.min(100, Math.round(value)));
+  return (
+    <div
+      className="progress"
+      role="progressbar"
+      aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={clamped}
+    >
+      <div
+        className={`progress-fill${tone === "blue" ? "" : ` tone-${tone}`}`}
+        style={{ width: `${clamped}%` }}
+      />
+    </div>
+  );
+}
+
 export function ErrorText({ error }: { error: string | null }) {
   if (!error) return null;
   return <div className="error-text">{error}</div>;

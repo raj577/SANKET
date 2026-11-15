@@ -9,13 +9,13 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.deps import require_admin
-from app.core.exceptions import NotFoundError, ValidationError
+from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.core.timeutils import to_ist, utcnow
 from app.db.session import get_db
 from app.models.audit import AdminAuditLog
 from app.models.collector import CollectorToken
-from app.models.enums import CandidateStatus, ScanStatus, SignalStatus
-from app.models.scan import ScanCandidate, ScanRun
+from app.models.enums import CandidateStatus, ScanStatus, ScanType, SignalStatus
+from app.models.scan import PatternCandidate, ScanCandidate, ScanRun
 from app.models.signal import PublishedSignal
 from app.models.user import User
 from app.schemas.admin import (
@@ -32,6 +32,10 @@ from app.schemas.scan import (
     CandidateOut,
     CandidateRejectRequest,
     KotakScanRequest,
+    PatternCandidateOut,
+    PatternProgressOut,
+    PatternScanRequest,
+    PatternSymbolOut,
     ScanDetailOut,
     ScanOut,
 )
@@ -48,6 +52,7 @@ from app.services import (
     audit_service,
     candidate_service,
     kotak_scan_service,
+    pattern_scan_service,
     scan_service,
     settings_service,
     signal_service,
@@ -77,21 +82,29 @@ def overview(db: Session = Depends(get_db)) -> DashboardOverview:
     start = _today_utc_start()
 
     today_scans = db.scalar(
-        select(func.count(ScanRun.id)).where(ScanRun.started_at >= start)
+        select(func.count(ScanRun.id)).where(
+            ScanRun.started_at >= start,
+            ScanRun.scan_type == ScanType.OI.value,
+        )
     ) or 0
     successful = db.scalar(
         select(func.count(ScanRun.id)).where(
-            ScanRun.started_at >= start, ScanRun.status == ScanStatus.COMPLETED.value
+            ScanRun.started_at >= start,
+            ScanRun.status == ScanStatus.COMPLETED.value,
+            ScanRun.scan_type == ScanType.OI.value,
         )
     ) or 0
     failed = db.scalar(
         select(func.count(ScanRun.id)).where(
-            ScanRun.started_at >= start, ScanRun.status == ScanStatus.FAILED.value
+            ScanRun.started_at >= start,
+            ScanRun.status == ScanStatus.FAILED.value,
+            ScanRun.scan_type == ScanType.OI.value,
         )
     ) or 0
     scanned_stocks = db.scalar(
         select(func.coalesce(func.sum(ScanRun.successful_symbols), 0)).where(
-            ScanRun.started_at >= start
+            ScanRun.started_at >= start,
+            ScanRun.scan_type == ScanType.OI.value,
         )
     ) or 0
 
@@ -128,7 +141,10 @@ def overview(db: Session = Depends(get_db)) -> DashboardOverview:
         )
     ) or 0
     archives = db.scalar(
-        select(func.count(ScanRun.id)).where(ScanRun.csv_storage_path.is_not(None))
+        select(func.count(ScanRun.id)).where(
+            ScanRun.csv_storage_path.is_not(None),
+            ScanRun.scan_type == ScanType.OI.value,
+        )
     ) or 0
 
     from app.core.config import get_settings
@@ -173,6 +189,7 @@ def list_scans(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
     status: str | None = None,
+    scan_type: str = Query(default=ScanType.OI.value),
     date_from: datetime | None = None,
     date_to: datetime | None = None,
     search: str | None = None,
@@ -181,6 +198,7 @@ def list_scans(
     scans, total = scan_service.list_scans(
         db,
         status=status,
+        scan_type=scan_type,
         date_from=date_from,
         date_to=date_to,
         search=search,
@@ -250,11 +268,69 @@ def start_kotak_scan(
     return _start_oi_scan(payload, background_tasks, db, user, "kotak")
 
 
+@router.post("/scans/pattern", response_model=ScanOut, status_code=202)
+def start_pattern_scan(
+    payload: PatternScanRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+) -> ScanOut:
+    """Run the independent AVWAP/VWAP option-pattern scanner."""
+
+    # Validate the request before the provider check so a malformed request is
+    # reported as such even when FYERS is not connected yet.
+    timeframe = pattern_scan_service.validate_timeframe(payload.timeframe)
+    symbols = pattern_scan_service.normalize_symbols(payload.symbols)
+
+    ready, message = pattern_scan_service.provider_ready()
+    if not ready:
+        raise ConflictError(message)
+
+    scan = pattern_scan_service.create_scan(
+        db, total_symbols=len(symbols), timeframe=timeframe
+    )
+    audit_service.record(
+        db,
+        action="SCAN_STARTED",
+        entity_type="scan_run",
+        entity_id=str(scan.id),
+        details={
+            "scan_type": ScanType.AVWAP_PATTERN.value,
+            "source": "pattern",
+            "timeframe": timeframe,
+            "symbols": len(symbols) or "universe",
+        },
+        user=user,
+    )
+    db.commit()
+    background_tasks.add_task(
+        pattern_scan_service.run_scan_job,
+        scan.id,
+        symbols,
+        timeframe,
+        payload.include_index,
+        payload.current_expiry_only,
+    )
+    return scan_out(scan)
+
+
 @router.get("/scans/{scan_id}", response_model=ScanDetailOut)
 def get_scan(scan_id: uuid.UUID, db: Session = Depends(get_db)) -> ScanDetailOut:
     scan = scan_service.get_scan(db, scan_id)
     out = ScanDetailOut.model_validate(scan)
     out.warnings = [scan.error_message] if scan.error_message else []
+    if scan.scan_type == ScanType.AVWAP_PATTERN.value:
+        rows = pattern_scan_service.candidates_for_scan(db, scan.id)
+        out.pattern_candidates = [PatternCandidateOut.model_validate(row) for row in rows]
+        out.pattern_summary = pattern_scan_service.pattern_summary(scan, rows)
+        out.pattern_config = (scan.scanner_config or {}).get("detector")
+        out.pattern_progress = PatternProgressOut.model_validate(
+            pattern_scan_service.pattern_progress(scan, matched=len(rows))
+        )
+        out.pattern_symbols = [
+            PatternSymbolOut.model_validate(entry)
+            for entry in pattern_scan_service.pattern_symbols(scan)
+        ]
     return out
 
 
@@ -323,6 +399,15 @@ async def publish_candidate(
     db: Session = Depends(get_db),
     user: User = Depends(require_admin),
 ) -> SignalOut:
+    candidate = db.get(ScanCandidate, candidate_id)
+    if candidate is None:
+        # Pattern detections live in their own table and are review-only, so
+        # publishing one is a deliberate conflict rather than a missing row.
+        if db.get(PatternCandidate, candidate_id) is not None:
+            raise ConflictError(
+                "Pattern candidates are review-only and cannot be published as OI signals"
+            )
+        raise NotFoundError("Candidate not found")
     policy = settings_service.get_value(db, "signal_policy")
     signal = signal_service.publish_signal(
         db,
@@ -336,6 +421,57 @@ async def publish_candidate(
     out = signal_out(signal)
     await broadcast_signal_event("signal_published", out.model_dump(mode="json"))
     return out
+
+
+# ------------------------------------------------------------------ pattern candidates
+
+
+@router.get("/pattern-candidates", response_model=Page[PatternCandidateOut])
+def list_pattern_candidates(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    scan_id: uuid.UUID | None = None,
+    status: str | None = None,
+    pattern_type: str | None = None,
+    db: Session = Depends(get_db),
+) -> dict:
+    rows, total = pattern_scan_service.list_candidates(
+        db,
+        scan_id=scan_id,
+        status=status,
+        pattern_type=pattern_type,
+        offset=(page - 1) * page_size,
+        limit=page_size,
+    )
+    return _page(
+        [PatternCandidateOut.model_validate(row) for row in rows],
+        total,
+        page,
+        page_size,
+    )
+
+
+@router.post("/pattern-candidates/{candidate_id}/approve", response_model=PatternCandidateOut)
+def approve_pattern_candidate(
+    candidate_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+) -> PatternCandidateOut:
+    candidate = pattern_scan_service.approve_candidate(db, candidate_id, user)
+    return PatternCandidateOut.model_validate(candidate)
+
+
+@router.post("/pattern-candidates/{candidate_id}/reject", response_model=PatternCandidateOut)
+def reject_pattern_candidate(
+    candidate_id: uuid.UUID,
+    payload: CandidateRejectRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+) -> PatternCandidateOut:
+    candidate = pattern_scan_service.reject_candidate(
+        db, candidate_id, user, payload.reason
+    )
+    return PatternCandidateOut.model_validate(candidate)
 
 
 # ----------------------------------------------------------------------------- signals

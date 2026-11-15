@@ -23,6 +23,9 @@ os.environ.update(
         "BOOTSTRAP_ADMIN_PASSWORD": "adminpass123",
         "BOOTSTRAP_ADMIN_NAME": "Test Admin",
         "RATE_LIMIT_ENABLED": "false",
+        # FYERS tests never touch the real token path or a real key.
+        "FYERS_TOKEN_FILE": str(TEST_STORAGE / "fyers_token.bin"),
+        "FYERS_TOKEN_ENCRYPTION_KEY": "YiEbDjsaeXPkcF3-SBovy3NFqryCm37jxFC6AWGyg2U=",
     }
 )
 

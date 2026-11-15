@@ -4,8 +4,8 @@ import { useEffect, useState } from "react";
 
 import { Badge, Card, ErrorText, Field, Spinner } from "@/components/ui";
 import { api } from "@/lib/api";
-import { formatDateTime, relativeTime } from "@/lib/format";
-import type { MarketStatus, SettingsMap } from "@/lib/types";
+import { formatDateTime, formatRemaining, relativeTime } from "@/lib/format";
+import type { FyersStatus, MarketStatus, SettingsMap } from "@/lib/types";
 import { useApiData } from "@/lib/use-api-data";
 
 function bool(value: unknown, fallback = false): boolean {
@@ -22,7 +22,8 @@ function numberValue(value: unknown, fallback: number): number {
 
 export default function SettingsPage() {
   const { data, loading, error, reload } = useApiData<{ settings: SettingsMap }>("/admin/settings");
-  const market = useApiData<MarketStatus>("/market/status");
+  const market = useApiData<MarketStatus>("/market/status", { refetchOnFocus: true });
+  const fyers = useApiData<FyersStatus>("/market/fyers/status", { refetchOnFocus: true });
   const [settings, setSettings] = useState<SettingsMap>({});
   const [message, setMessage] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -34,6 +35,19 @@ export default function SettingsPage() {
   const [authError, setAuthError] = useState<string | null>(null);
   const provider = (market.data?.provider ?? "FYERS").toUpperCase();
   const isFyers = provider === "FYERS";
+
+  const fyersData = fyers.data;
+  const fyersBadge: { tone: "green" | "amber" | "red" | "gray"; label: string } = (() => {
+    if (!fyersData) return { tone: "gray", label: fyers.loading ? "Checking…" : "Unknown" };
+    if (fyersData.token_valid) {
+      return fyersData.expires_soon
+        ? { tone: "amber", label: "Expires soon" }
+        : { tone: "green", label: "Connected" };
+    }
+    if (fyersData.token_present) return { tone: "red", label: "Re-login required" };
+    return { tone: "amber", label: "Not connected" };
+  })();
+  const fyersConnectDisabled = Boolean(fyersData && !fyersData.login_available);
 
   useEffect(() => {
     if (data) setSettings(data.settings);
@@ -86,11 +100,23 @@ export default function SettingsPage() {
   async function openFyersLogin() {
     setAuthError(null);
     setAuthMessage(null);
+
+    // Open the tab inside the click gesture: browsers drop the user activation
+    // after an await, so window.open() below would be treated as a pop-up.
+    const tab = window.open("", "_blank");
+    if (tab) tab.opener = null;
+
     try {
       const response = await api.get<{ url: string }>("/market/fyers/login-url");
-      window.open(response.url, "_blank", "noopener,noreferrer");
-      setAuthMessage("Complete the FYERS login in the new tab; this page updates after you return.");
+      if (tab) {
+        tab.location.replace(response.url);
+        setAuthMessage("Complete the FYERS login in the new tab; this page refreshes when you return.");
+      } else {
+        // Pop-ups are blocked: continue in this tab instead of dead-ending.
+        window.location.assign(response.url);
+      }
     } catch (err) {
+      if (tab) tab.close();
       setAuthError(err instanceof Error ? err.message : "Unable to build the FYERS login URL");
     }
   }
@@ -107,6 +133,7 @@ export default function SettingsPage() {
       setAuthCode("");
       setAuthMessage("FYERS access token stored.");
       market.reload();
+      fyers.reload();
     } catch (err) {
       setAuthError(err instanceof Error ? err.message : "Token exchange failed");
     } finally {
@@ -155,29 +182,9 @@ export default function SettingsPage() {
         </dl>
 
         {isFyers ? (
-          <div className="flex" style={{ marginTop: 14, justifyContent: "space-between", alignItems: "flex-end", gap: 16, flexWrap: "wrap" }}>
-            <div>
-              <button className="btn small" onClick={openFyersLogin}>
-                Connect FYERS
-              </button>
-              <div className="muted small" style={{ marginTop: 8 }}>
-                Opens the FYERS login page. After approving, the redirect stores the token on the backend.
-              </div>
-            </div>
-
-            <form onSubmit={exchangeCode} style={{ display: "grid", gap: 8 }}>
-              <Field label="Or paste the auth_code from the redirect URL">
-                <input
-                  value={authCode}
-                  onChange={(event) => setAuthCode(event.target.value)}
-                  placeholder="auth_code=…"
-                  style={{ minWidth: 280 }}
-                />
-              </Field>
-              <button type="submit" className="btn ghost small" disabled={authBusy || !authCode.trim()}>
-                {authBusy ? "Exchanging…" : "Store token"}
-              </button>
-            </form>
+          <div className="muted small" style={{ marginTop: 12 }}>
+            LTP tracking uses the FYERS access token managed under{" "}
+            <strong>FYERS data connection</strong> below.
           </div>
         ) : (
           <div className="muted small" style={{ marginTop: 12 }}>
@@ -188,12 +195,142 @@ export default function SettingsPage() {
           </div>
         )}
 
-        {authMessage ? <div className="success-text" style={{ marginTop: 12 }}>{authMessage}</div> : null}
-        <ErrorText error={authError} />
         <div className="muted small" style={{ marginTop: 10 }}>
           Credentials stay in <code>backend/.env</code>. Tokens/sessions are held by the backend
           and never exposed to the browser. Target and stop-loss crossings close the signal
           automatically.
+        </div>
+      </Card>
+
+      <Card
+        title="FYERS data connection"
+        actions={
+          <div className="flex">
+            <Badge tone={fyersBadge.tone}>{fyersBadge.label}</Badge>
+            <button className="btn ghost small" onClick={fyers.reload} disabled={fyers.loading}>
+              {fyers.loading ? "Refreshing…" : "Refresh"}
+            </button>
+          </div>
+        }
+      >
+        {fyersData && !fyersData.credentials_configured ? (
+          <div className="warn-text" style={{ marginBottom: 12 }}>
+            <code>FYERS_APP_ID</code> / <code>FYERS_SECRET_KEY</code> are not set. Add both to{" "}
+            <code>backend/.env</code> and restart the backend before connecting.
+          </div>
+        ) : null}
+
+        {fyersData && !fyersData.encryption_configured ? (
+          <div className="warn-text" style={{ marginBottom: 12 }}>
+            <code>FYERS_TOKEN_ENCRYPTION_KEY</code> is not set, so the callback refuses to store
+            the token — there is no plaintext fallback. Generate one with{" "}
+            <code>python -m app.cli generate-fyers-key</code>, add it to{" "}
+            <code>backend/.env</code>, restart the backend, then connect again.
+          </div>
+        ) : null}
+
+        {fyersData && fyersData.token_present && !fyersData.token_valid ? (
+          <div className="warn-text" style={{ marginBottom: 12 }}>
+            The stored FYERS token is no longer valid — it expired, or it cannot be decrypted with
+            the current encryption key. Reconnect to restore LTP tracking and OI scans.
+          </div>
+        ) : null}
+
+        {fyersData && fyersData.token_valid && fyersData.expires_soon ? (
+          <div className="warn-text" style={{ marginBottom: 12 }}>
+            The FYERS token expires {formatRemaining(fyersData.seconds_remaining)}. Reconnect to
+            avoid an interruption in LTP tracking and OI scans.
+          </div>
+        ) : null}
+
+        <dl className="kv">
+          <dt>Status</dt>
+          <dd>
+            <Badge tone={fyersBadge.tone}>{fyersBadge.label}</Badge>
+          </dd>
+          <dt>Token</dt>
+          <dd>{fyersData?.token_present ? "Stored encrypted" : "No token stored"}</dd>
+          <dt>Valid until</dt>
+          <dd>
+            {fyersData?.expires_at
+              ? `${formatDateTime(fyersData.expires_at)} (${formatRemaining(fyersData.seconds_remaining)})`
+              : "Unknown — FYERS reported no expiry"}
+          </dd>
+          <dt>Last login</dt>
+          <dd>
+            {fyersData?.authenticated_at
+              ? `${formatDateTime(fyersData.authenticated_at)} (${relativeTime(fyersData.authenticated_at)})`
+              : "Never"}
+          </dd>
+          <dt>Login source</dt>
+          <dd>{fyersData?.source ?? "—"}</dd>
+          <dt>Encryption key</dt>
+          <dd>
+            <Badge tone={fyersData?.encryption_configured ? "green" : "amber"}>
+              {fyersData?.encryption_configured ? "Configured" : "Missing"}
+            </Badge>
+          </dd>
+          <dt>App credentials</dt>
+          <dd>
+            <Badge tone={fyersData?.credentials_configured ? "green" : "amber"}>
+              {fyersData?.credentials_configured ? "Configured" : "Missing"}
+            </Badge>
+          </dd>
+          <dt>Redirect URI</dt>
+          <dd>
+            <span className="mono small">{fyersData?.redirect_uri ?? "—"}</span>
+          </dd>
+          <dt>Used for</dt>
+          <dd>
+            {isFyers
+              ? "Live LTP tracking and admin OI scans"
+              : `Admin OI scans (LTP tracking uses ${provider})`}
+          </dd>
+        </dl>
+
+        <div
+          className="flex"
+          style={{
+            marginTop: 14,
+            justifyContent: "space-between",
+            alignItems: "flex-end",
+            gap: 16,
+            flexWrap: "wrap"
+          }}
+        >
+          <div>
+            <button className="btn small" onClick={openFyersLogin} disabled={fyersConnectDisabled}>
+              {fyersData?.token_present ? "Reconnect FYERS" : "Connect FYERS"}
+            </button>
+            <div className="muted small" style={{ marginTop: 8 }}>
+              Opens the official FYERS login page in a new tab. The redirect validates the signed
+              state, exchanges the code server-side and stores the token encrypted; this card
+              refreshes when you return to this tab.
+            </div>
+          </div>
+
+          <form onSubmit={exchangeCode} style={{ display: "grid", gap: 8 }}>
+            <Field label="Or paste the auth_code from the redirect URL">
+              <input
+                value={authCode}
+                onChange={(event) => setAuthCode(event.target.value)}
+                placeholder="auth_code=…"
+                style={{ minWidth: 280 }}
+              />
+            </Field>
+            <button type="submit" className="btn ghost small" disabled={authBusy || !authCode.trim()}>
+              {authBusy ? "Exchanging…" : "Store token"}
+            </button>
+          </form>
+        </div>
+
+        {authMessage ? <div className="success-text" style={{ marginTop: 12 }}>{authMessage}</div> : null}
+        <div style={{ marginTop: 10 }}>
+          <ErrorText error={authError || fyersData?.error || fyers.error} />
+        </div>
+        <div className="muted small" style={{ marginTop: 10 }}>
+          The access token is never shown in this page or any API response. FYERS tokens are daily:
+          reconnect from this card after each expiry.
         </div>
       </Card>
 

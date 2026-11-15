@@ -105,6 +105,27 @@ def cmd_seed_settings(_: argparse.Namespace) -> int:
         return 0
 
 
+def cmd_generate_fyers_key(_: argparse.Namespace) -> int:
+    """Print a fresh Fernet key for FYERS_TOKEN_ENCRYPTION_KEY."""
+    from app.market_data.fyers_token_store import generate_key
+
+    print("Add this to .env (keep it stable across restarts; never commit it):")
+    print(f"FYERS_TOKEN_ENCRYPTION_KEY={generate_key()}")
+    return 0
+
+
+def cmd_fyers_status(_: argparse.Namespace) -> int:
+    """Print the encrypted-token status without revealing the token."""
+    import json
+
+    from app.market_data.fyers_token_store import FyersTokenStore
+
+    status = FyersTokenStore().status().as_dict()
+    print(json.dumps(status, indent=2, default=str))
+    return 0 if status["token_present"] else 1
+
+
+
 def cmd_show_settings(_: argparse.Namespace) -> int:
     import json
 
@@ -143,6 +164,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("show-settings", help="Print effective settings").set_defaults(
         func=cmd_show_settings
     )
+    sub.add_parser(
+        "generate-fyers-key", help="Print a Fernet key for FYERS_TOKEN_ENCRYPTION_KEY"
+    ).set_defaults(func=cmd_generate_fyers_key)
+    sub.add_parser(
+        "fyers-status", help="Print FYERS token status (never the token itself)"
+    ).set_defaults(func=cmd_fyers_status)
     return parser
 
 

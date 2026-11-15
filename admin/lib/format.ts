@@ -40,6 +40,28 @@ export function relativeTime(value: string | null | undefined): string {
   return `${Math.round(hours / 24)}d ago`;
 }
 
+/**
+ * Human-readable countdown for a token/credential lifetime.
+ * Positive seconds read as "11h 30m"; negative as "expired 5m ago".
+ */
+export function formatRemaining(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) return "unknown";
+  const expired = seconds <= 0;
+  const total = Math.abs(Math.round(seconds));
+  const days = Math.floor(total / 86400);
+  const hours = Math.floor((total % 86400) / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+
+  let span: string;
+  if (days > 0) span = `${days}d ${hours}h`;
+  else if (hours > 0) span = `${hours}h ${minutes}m`;
+  else if (minutes > 0) span = `${minutes}m ${secs}s`;
+  else span = `${secs}s`;
+
+  return expired ? `expired ${span} ago` : `in ${span}`;
+}
+
 export function num(value: string | number | null | undefined, digits = 2): string {
   if (value === null || value === undefined || value === "") return "—";
   const number = Number(value);

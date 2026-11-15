@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from pydantic import Field
@@ -37,6 +37,19 @@ class KotakScanRequest(ORMModel):
     provider: str | None = Field(default=None, max_length=16)
 
 
+class PatternScanRequest(ORMModel):
+    """Request for the independent AVWAP/VWAP pattern scanner.
+
+    ``symbols`` accepts full FYERS symbols or bare underlyings. When omitted,
+    the scanner uses the current-expiry NSE futures universe.
+    """
+
+    symbols: list[str] | None = None
+    timeframe: str | None = Field(default=None, max_length=8)
+    include_index: bool = True
+    current_expiry_only: bool = True
+
+
 class ScanCsvSummary(ORMModel):
     csv_filename: str | None = None
     csv_storage_path: str | None = None
@@ -50,6 +63,8 @@ class ScanOut(ORMModel):
     started_at: datetime
     completed_at: datetime | None
     status: str
+    scan_type: str = "OI"
+    timeframe: str | None = None
     total_symbols: int
     successful_symbols: int
     failed_symbols: int
@@ -68,9 +83,65 @@ class ScanOut(ORMModel):
     created_at: datetime
 
 
+class PatternCandidateOut(ORMModel):
+    """One pattern detection. No confidence/score field exists by design."""
+
+    id: uuid.UUID
+    scan_id: uuid.UUID
+    symbol: str
+    underlying: str | None
+    expiry: date | None
+    timeframe: str
+    pattern_type: str
+    candle_count: int
+    last_price: Decimal
+    avwap: Decimal
+    distance_pct: Decimal
+    avg_body_ratio: Decimal
+    max_body_ratio: Decimal
+    window_range_pct: Decimal
+    touched: bool
+    atr: Decimal | None
+    anchor_at: datetime | None
+    pattern_start: datetime | None
+    pattern_end: datetime | None
+    status: str
+    reason: str
+    detector_metadata: dict | None
+    created_at: datetime
+
+
+class PatternSymbolOut(ORMModel):
+    """One row of the live per-instrument progress list."""
+
+    symbol: str
+    underlying: str | None = None
+    expiry: date | None = None
+    status: str
+    pattern_type: str | None = None
+    message: str | None = None
+    candles: int | None = None
+    last_price: Decimal | None = None
+
+
+class PatternProgressOut(ORMModel):
+    state: str
+    processed: int
+    total: int
+    percent: int
+    matched: int
+    failed: int
+    pending: int
+
+
 class ScanDetailOut(ScanOut):
     scanner_config: dict | None = None
     warnings: list[str] = Field(default_factory=list)
+    pattern_config: dict | None = None
+    pattern_summary: dict | None = None
+    pattern_candidates: list[PatternCandidateOut] = Field(default_factory=list)
+    pattern_progress: PatternProgressOut | None = None
+    pattern_symbols: list[PatternSymbolOut] = Field(default_factory=list)
 
 
 class CandidateRejectRequest(ORMModel):

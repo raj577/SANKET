@@ -557,6 +557,20 @@ th.right { text-align: right; }
   font-size: 12px;
 }
 
+.warn-text {
+  background: rgba(255, 200, 87, 0.08);
+  border: 1px solid rgba(255, 200, 87, 0.3);
+  color: var(--amber);
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.warn-text code {
+  color: inherit;
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -697,6 +711,60 @@ th.right { text-align: right; }
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 12px;
+}
+
+.progress {
+  height: 8px;
+  border-radius: 999px;
+  background: #0b1528;
+  border: 1px solid var(--line-soft);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), var(--blue));
+  transition: width 0.4s ease;
+}
+
+.progress-fill.tone-green { background: linear-gradient(90deg, #1f9c68, var(--green)); }
+.progress-fill.tone-red { background: linear-gradient(90deg, #c24545, var(--red)); }
+.progress-fill.tone-amber { background: linear-gradient(90deg, #c9973a, var(--amber)); }
+.progress-fill.tone-gray { background: linear-gradient(90deg, #4b5c7d, #8fa3c4); }
+
+.progress-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.progress-head strong { font-size: 13px; }
+
+.progress-stats {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.symbol-scroll {
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+}
+
+.symbol-scroll thead th {
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  z-index: 1;
 }
 
 @media (max-width: 900px) {

@@ -1,8 +1,6 @@
 """Market-data provider configuration status."""
 from __future__ import annotations
 
-from pathlib import Path
-
 from app.core.config import get_settings
 
 
@@ -11,6 +9,10 @@ def provider_status() -> tuple[str, bool, bool]:
 
     Kotak quotes/scrip master need only the consumer key; the SFeed websocket
     additionally needs mobile number, UCC, MPIN and the TOTP secret.
+
+    For FYERS, ``configured`` means an app id plus a readable access token
+    (either the ``FYERS_ACCESS_TOKEN`` development override or the encrypted
+    token file written by the OAuth callback).
     """
     settings = get_settings()
     provider = (settings.market_data_provider or "fyers").lower()
@@ -25,7 +27,9 @@ def provider_status() -> tuple[str, bool, bool]:
             ]
         )
         return provider, configured, stream_ready
-    configured = bool(settings.fyers_app_id) and (
-        bool(settings.fyers_access_token) or Path(settings.fyers_token_file).is_file()
-    )
+
+    from app.market_data.fyers_token_store import FyersTokenStore
+
+    token_present = bool(settings.fyers_access_token) or FyersTokenStore().status().token_present
+    configured = bool(settings.fyers_app_id) and token_present
     return provider, configured, configured

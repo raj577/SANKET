@@ -16,11 +16,15 @@ export interface Page<T> {
   page_size: number;
 }
 
+export type ScanType = "OI" | "AVWAP_PATTERN";
+
 export interface Scan {
   id: string;
   started_at: string;
   completed_at: string | null;
   status: string;
+  scan_type: ScanType;
+  timeframe: string | null;
   total_symbols: number;
   successful_symbols: number;
   failed_symbols: number;
@@ -42,6 +46,81 @@ export interface Scan {
 export interface ScanDetail extends Scan {
   scanner_config: Record<string, unknown> | null;
   warnings: string[];
+  pattern_config: Record<string, unknown> | null;
+  pattern_summary: PatternSummary | null;
+  pattern_candidates: PatternCandidate[];
+  pattern_progress: PatternProgress | null;
+  pattern_symbols: PatternSymbolProgress[];
+}
+
+/** Progress bar state for one pattern run. */
+export interface PatternProgress {
+  state: "queued" | "running" | "finished";
+  processed: number;
+  total: number;
+  percent: number;
+  matched: number;
+  failed: number;
+  pending: number;
+}
+
+export type PatternSymbolStatus =
+  | "PENDING"
+  | "SCANNING"
+  | "MATCHED"
+  | "NO_PATTERN"
+  | "NO_DATA"
+  | "SKIPPED"
+  | "ERROR";
+
+/** One row of the per-instrument progress list. */
+export interface PatternSymbolProgress {
+  symbol: string;
+  underlying: string | null;
+  expiry: string | null;
+  status: PatternSymbolStatus;
+  pattern_type: PatternCandidate["pattern_type"] | null;
+  message: string | null;
+  candles: number | null;
+  last_price: string | null;
+}
+
+/**
+ * One AVWAP pattern detection. The detector has no confidence score, so none
+ * is exposed here.
+ */
+export interface PatternCandidate {
+  id: string;
+  scan_id: string;
+  symbol: string;
+  underlying: string | null;
+  expiry: string | null;
+  timeframe: string;
+  pattern_type: "AVWAP TOUCH" | "AVWAP HUGGING" | "AVWAP CONSOLIDATION" | "AVWAP RECLAIM";
+  candle_count: number;
+  last_price: string;
+  avwap: string;
+  distance_pct: string;
+  avg_body_ratio: string;
+  max_body_ratio: string;
+  window_range_pct: string;
+  touched: boolean;
+  atr: string | null;
+  anchor_at: string | null;
+  pattern_start: string | null;
+  pattern_end: string | null;
+  status: "PENDING" | "APPROVED" | "REJECTED" | "PUBLISHED" | "EXPIRED";
+  reason: string;
+  detector_metadata: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface PatternSummary {
+  timeframe: string | null;
+  matches: number;
+  instruments_resolved: number;
+  errors: number;
+  classification_counts: Record<string, number>;
 }
 
 export interface Candidate {
@@ -157,4 +236,29 @@ export interface MarketStatus {
   poll_interval_seconds: number;
   active_signals: number;
   last_price_update: string | null;
+}
+
+/**
+ * Secret-free FYERS authentication status from
+ * `GET /api/v1/market/fyers/status`. The access token is never part of it.
+ */
+export interface FyersStatus {
+  token_file: string;
+  encryption_configured: boolean;
+  credentials_configured: boolean;
+  token_present: boolean;
+  token_valid: boolean;
+  expires_at: string | null;
+  authenticated_at: string | null;
+  seconds_remaining: number | null;
+  source: string | null;
+  reauth_required: boolean;
+  expires_soon: boolean;
+  error: string | null;
+  provider: string;
+  app_id: string | null;
+  redirect_uri: string;
+  login_available: boolean;
+  market_data_configured: boolean;
+  stream_ready: boolean;
 }

@@ -13,7 +13,7 @@ from app.core.config import get_settings
 from app.core.exceptions import ConflictError, NotFoundError, StorageError, ValidationError
 from app.core.logging import get_logger
 from app.core.timeutils import ensure_aware, utcnow
-from app.models.enums import CandidateStatus, ScanStatus
+from app.models.enums import CandidateStatus, ScanStatus, ScanType
 from app.models.scan import ScanCandidate, ScanRun
 from app.scanner.engine import ScanResult, scan_dataframe
 from app.scanner.scoring import ScannerConfig
@@ -31,6 +31,8 @@ def create_scan(
     started_at: datetime | None = None,
     total_symbols: int = 0,
     trigger: str | None = None,
+    scan_type: str = ScanType.OI.value,
+    timeframe: str | None = None,
 ) -> ScanRun:
     if scan_id is not None:
         existing = db.get(ScanRun, scan_id)
@@ -41,6 +43,8 @@ def create_scan(
         id=scan_id or uuid.uuid4(),
         started_at=ensure_aware(started_at) if started_at else utcnow(),
         status=ScanStatus.PENDING.value,
+        scan_type=scan_type,
+        timeframe=timeframe,
         total_symbols=max(int(total_symbols or 0), 0),
         trigger=trigger,
     )
@@ -274,6 +278,7 @@ def list_scans(
     db: Session,
     *,
     status: str | None = None,
+    scan_type: str | None = None,
     date_from: datetime | None = None,
     date_to: datetime | None = None,
     search: str | None = None,
@@ -285,6 +290,8 @@ def list_scans(
     conditions = []
     if status:
         conditions.append(ScanRun.status == status)
+    if scan_type:
+        conditions.append(ScanRun.scan_type == scan_type)
     if date_from:
         conditions.append(ScanRun.started_at >= date_from)
     if date_to:
