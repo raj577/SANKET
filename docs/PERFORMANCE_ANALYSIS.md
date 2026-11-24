@@ -179,10 +179,11 @@ Response shape (abridged):
 * Date window and forward-session selector (3/5/10).
 * **Stock set** switch: *All stocks*, *Approved*, *Not approved*. It changes the
   query, so the stat cards, day rows and totals all describe the chosen set.
-* Stat cards: filtered stocks, average D+1 return, D+1 win rate, candle cache
-  coverage.
-* One expandable row per scan day: scans, filtered count, long/short split, the
-  average return and sample size for each D+n column, and D+1 win rate.
+* Stat cards: filtered stocks, average D+1 return, D+1 win rate, D+3 win rate,
+  candle cache coverage.
+* One expandable row per scan day: scans, filtered count, long/short split, and
+  for each D+n column the average return, sample size and win rate. The
+  *All days* row repeats the same three numbers for the whole selection.
 * Expanding a day lists every stock: direction, grade, score, scan LTP, the
   close and direction-adjusted return for each session, plus a coverage badge
   (`COMPLETE`, `PARTIAL`, `PENDING`, `NO_DATA`).

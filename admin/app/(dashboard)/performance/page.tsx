@@ -26,6 +26,7 @@ import type {
   CandleBackfill,
   PerformanceCoverage,
   PerformanceDay,
+  PerformanceOffset,
   PerformanceReport,
   PerformanceSymbol
 } from "@/lib/types";
@@ -74,6 +75,34 @@ function coverageTone(coverage: PerformanceCoverage) {
 
 function offsetLabel(index: number): string {
   return `D+${index + 1}`;
+}
+
+function winRateText(offset: PerformanceOffset | undefined): string {
+  if (!offset || offset.win_rate_pct === null || offset.win_rate_pct === undefined) {
+    return "—";
+  }
+  return `${offset.win_rate_pct}%`;
+}
+
+function OffsetCell({
+  offset,
+  strong = false
+}: {
+  offset: PerformanceOffset | undefined;
+  strong?: boolean;
+}) {
+  if (!offset?.n) {
+    return <td className="right muted">—</td>;
+  }
+  return (
+    <td className={`right ${returnClass(offset.avg_return_pct)}`}>
+      {strong ? <strong>{signedPercent(offset.avg_return_pct)}</strong> : signedPercent(offset.avg_return_pct)}
+      <span className="muted small">
+        {" · "}
+        {offset.n} · {winRateText(offset)} win
+      </span>
+    </td>
+  );
 }
 
 export default function PerformancePage() {
@@ -166,6 +195,7 @@ export default function PerformancePage() {
         ? "Not approved stocks"
         : "Filtered stocks";
   const d1 = totals?.offsets?.[0];
+  const d3 = totals?.offsets?.[2];
   const cache = data?.cache;
   const missingCount = data?.missing_symbols.length ?? 0;
   const staleCache =
@@ -359,6 +389,18 @@ export default function PerformancePage() {
               }
             />
             <StatCard
+              label="D+3 win rate"
+              value={winRateText(d3)}
+              hint={d3?.n ? `${d3.n} sampled` : "no sample"}
+              tone={
+                d3?.win_rate_pct === null || d3?.win_rate_pct === undefined
+                  ? "gray"
+                  : d3.win_rate_pct >= 50
+                    ? "green"
+                    : "amber"
+              }
+            />
+            <StatCard
               label="Candle cache"
               value={cache?.data_to ? formatDate(cache.data_to) : "empty"}
               hint={
@@ -385,9 +427,9 @@ export default function PerformancePage() {
                       {Array.from({ length: data.forward_days }).map((_unused, index) => (
                         <th key={index} className="right">
                           {offsetLabel(index)}
+                          <span className="muted small"> · avg · n · win</span>
                         </th>
                       ))}
-                      <th className="right">D+1 win</th>
                       <th />
                     </tr>
                   </thead>
@@ -415,27 +457,9 @@ export default function PerformancePage() {
                         <strong>{totals?.filtered ?? 0}</strong>
                       </td>
                       <td className="right">—</td>
-                      {Array.from({ length: data.forward_days }).map((_unused, index) => {
-                        const offset = totals?.offsets?.[index];
-                        return (
-                          <td key={index} className={`right ${returnClass(offset?.avg_return_pct)}`}>
-                            {offset?.n ? (
-                              <>
-                                {signedPercent(offset.avg_return_pct)}
-                                <span className="muted small"> · {offset.n}</span>
-                              </>
-                            ) : (
-                              "—"
-                            )}
-                          </td>
-                        );
-                      })}
-                      <td className="right">
-                        {totals?.offsets?.[0]?.win_rate_pct === null ||
-                        totals?.offsets?.[0]?.win_rate_pct === undefined
-                          ? "—"
-                          : `${totals.offsets[0].win_rate_pct}%`}
-                      </td>
+                      {Array.from({ length: data.forward_days }).map((_unused, index) => (
+                        <OffsetCell key={index} offset={totals?.offsets?.[index]} strong />
+                      ))}
                       <td />
                     </tr>
                   </tbody>
@@ -444,8 +468,9 @@ export default function PerformancePage() {
             )}
             <p className="performance-note">
               One row per stock per day; when the scanner ran several times, the latest scan
-              is the entry. D+n columns show the average direction-adjusted return and the
-              number of stocks with a close for that session.
+              is the entry. Each D+n cell shows the average direction-adjusted return, the
+              number of stocks with a close for that session, and their win rate (share with
+              a positive return).
             </p>
           </Card>
         </>
@@ -465,7 +490,6 @@ function DayRow({
   expanded: boolean;
   onToggle: () => void;
 }) {
-  const first = day.offsets[0];
   return (
     <>
       <tr>
@@ -483,26 +507,9 @@ function DayRow({
         <td className="right">
           {day.long_count} / {day.short_count}
         </td>
-        {Array.from({ length: forwardDays }).map((_unused, index) => {
-          const offset = day.offsets[index];
-          return (
-            <td key={index} className={`right ${returnClass(offset?.avg_return_pct)}`}>
-              {offset?.n ? (
-                <>
-                  {signedPercent(offset.avg_return_pct)}
-                  <span className="muted small"> · {offset.n}</span>
-                </>
-              ) : (
-                "—"
-              )}
-            </td>
-          );
-        })}
-        <td className="right">
-          {first?.win_rate_pct === null || first?.win_rate_pct === undefined
-            ? "—"
-            : `${first.win_rate_pct}%`}
-        </td>
+        {Array.from({ length: forwardDays }).map((_unused, index) => (
+          <OffsetCell key={index} offset={day.offsets[index]} />
+        ))}
         <td className="right">
           <button className="btn small ghost" onClick={onToggle}>
             {expanded ? "Hide" : "Stocks"}
@@ -511,7 +518,7 @@ function DayRow({
       </tr>
       {expanded ? (
         <tr>
-          <td colSpan={forwardDays + 6} className="performance-detail">
+          <td colSpan={forwardDays + 5} className="performance-detail">
             <div className="table-wrap">
               <table>
                 <thead>
