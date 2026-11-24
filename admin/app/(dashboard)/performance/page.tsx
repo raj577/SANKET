@@ -26,6 +26,8 @@ import type {
   CandleBackfill,
   PerformanceCoverage,
   PerformanceDay,
+  PerformanceExtreme,
+  PerformanceHighLow,
   PerformanceOffset,
   PerformanceReport,
   PerformanceSymbol
@@ -102,6 +104,46 @@ function OffsetCell({
         {offset.n} · {winRateText(offset)} win
       </span>
     </td>
+  );
+}
+
+function ExtremeCell({
+  extreme,
+  returnPct
+}: {
+  extreme: PerformanceExtreme | undefined;
+  returnPct: number | null | undefined;
+}) {
+  if (!extreme || extreme.offset === null || extreme.price === null) {
+    return <span className="muted small">—</span>;
+  }
+  return (
+    <>
+      <strong>D+{extreme.offset}</strong>
+      <div className="muted small">
+        {num(extreme.price)} · {signedPercent(returnPct)}
+      </div>
+    </>
+  );
+}
+
+function SignalFit({ summary }: { summary: PerformanceHighLow | null | undefined }) {
+  if (!summary || summary.favourable === null || summary.favourable === undefined) {
+    return <span className="muted small">—</span>;
+  }
+  const extreme = summary.favourable_role === "long" ? summary.highest : summary.lowest;
+  const day = extreme.offset === null ? "—" : `D+${extreme.offset}`;
+  const title = `${summary.actual_direction} at its ${
+    summary.favourable_role === "long" ? "highest high" : "lowest low"
+  }: ${signedPercent(summary.favourable_return_pct)} (worst point ${signedPercent(
+    summary.adverse_return_pct
+  )})`;
+  return (
+    <span title={title}>
+      <Badge tone={summary.favourable ? "green" : "red"}>
+        {summary.actual_direction} {summary.favourable ? "✓" : "✗"} {day}
+      </Badge>
+    </span>
   );
 }
 
@@ -536,6 +578,15 @@ function DayRow({
                           : ""}
                       </th>
                     ))}
+                    <th className="right" title="Highest intraday high over D+1..D+4: the best exit for a long">
+                      High · long
+                    </th>
+                    <th className="right" title="Lowest intraday low over D+1..D+4: the best exit for a short">
+                      Low · short
+                    </th>
+                    <th title="The row's own direction at that extreme; ✓ means it was still profitable">
+                      Signal fit
+                    </th>
                     <th>Coverage</th>
                   </tr>
                 </thead>
@@ -550,6 +601,13 @@ function DayRow({
                 </tbody>
               </table>
             </div>
+            <p className="performance-note">
+              <strong>High · long</strong> is the highest intraday high and{" "}
+              <strong>Low · short</strong> the lowest intraday low across D+1 to D+4,
+              with the return each would have given. <strong>Signal fit</strong> applies
+              the stock&apos;s own direction to its favourable extreme: ✓ when that best
+              point still beat the scan price, ✗ when it did not.
+            </p>
           </td>
         </tr>
       ) : null}
@@ -583,8 +641,14 @@ function SymbolRow({
       {Array.from({ length: forwardDays }).map((_unused, index) => {
         const close = row.closes[index];
         const value = row.returns_pct[index];
+        const high = row.highs?.[index];
+        const low = row.lows?.[index];
         return (
-          <td key={index} className={`right ${returnClass(value)}`}>
+          <td
+            key={index}
+            className={`right ${returnClass(value)}`}
+            title={high === null || high === undefined ? undefined : `Intraday high ${num(high)} · low ${num(low)}`}
+          >
             {value === null || value === undefined ? (
               "—"
             ) : (
@@ -596,6 +660,19 @@ function SymbolRow({
           </td>
         );
       })}
+      <td className="right">
+        <ExtremeCell
+          extreme={row.high_low?.highest}
+          returnPct={row.high_low?.best_long_return_pct}
+        />
+      </td>
+      <td className="right">
+        <ExtremeCell
+          extreme={row.high_low?.lowest}
+          returnPct={row.high_low?.best_short_return_pct}
+        />
+      </td>
+      <td><SignalFit summary={row.high_low} /></td>
       <td>
         <Badge tone={coverageTone(row.coverage)}>{row.coverage}</Badge>
       </td>

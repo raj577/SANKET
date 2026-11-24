@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -63,6 +64,21 @@ _STATUS_FILTER_SETS: dict[str, frozenset[str]] = {
 #: Extra calendar days fetched beyond the end of the window so D+N closes exist
 #: even across weekends and holidays.
 FORWARD_BUFFER_DAYS = 14
+
+#: How many forward sessions the intraday high/low summary covers. The report
+#: can show more D+n columns, but "which day was the high/low" is answered for
+#: the first four sessions (D+1..D+4).
+HIGH_LOW_WINDOW = 4
+
+
+@dataclass(frozen=True)
+class _Candle:
+    """One daily candle from the cache (spot, not derivatives)."""
+
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
 
 
 def _direction_sign(direction: str) -> int:
@@ -167,11 +183,14 @@ def refresh_window(
 
 def _load_candles(
     db: Session, date_from: date, date_to: date
-) -> dict[str, dict[date, Decimal]]:
+) -> dict[str, dict[date, _Candle]]:
     rows = db.execute(
         select(
             InstrumentCandle.symbol,
             InstrumentCandle.trade_date,
+            InstrumentCandle.open,
+            InstrumentCandle.high,
+            InstrumentCandle.low,
             InstrumentCandle.close,
         )
         .where(InstrumentCandle.trade_date >= date_from)
@@ -179,13 +198,15 @@ def _load_candles(
         .order_by(InstrumentCandle.trade_date.asc())
     ).all()
 
-    by_symbol: dict[str, dict[date, Decimal]] = defaultdict(dict)
-    for symbol, trade_date, close in rows:
-        by_symbol[symbol][trade_date] = close
+    by_symbol: dict[str, dict[date, _Candle]] = defaultdict(dict)
+    for symbol, trade_date, open_, high, low, close in rows:
+        by_symbol[symbol][trade_date] = _Candle(
+            open=open_, high=high, low=low, close=close
+        )
     return by_symbol
 
 
-def _build_calendar(by_symbol: dict[str, dict[date, Decimal]], *, today: date) -> list[date]:
+def _build_calendar(by_symbol: dict[str, dict[date, _Candle]], *, today: date) -> list[date]:
     settings = get_settings()
     benchmark = by_symbol.get(settings.performance_benchmark_symbol) or {}
     dates = set(benchmark)
@@ -197,7 +218,7 @@ def _build_calendar(by_symbol: dict[str, dict[date, Decimal]], *, today: date) -
 
 
 def _symbol_coverage(
-    candles: dict[date, Decimal], offset_dates: Sequence[date]
+    candles: dict[date, _Candle], offset_dates: Sequence[date]
 ) -> str:
     if not candles:
         return COVERAGE_NO_DATA
@@ -209,6 +230,68 @@ def _symbol_coverage(
     if present == 0:
         return COVERAGE_NO_DATA
     return COVERAGE_PARTIAL
+
+
+def _extreme(
+    index: int | None, considered: Sequence[date], price: Decimal | None
+) -> dict[str, Any]:
+    if index is None:
+        return {"offset": None, "trade_date": None, "price": None}
+    return {"offset": index + 1, "trade_date": considered[index], "price": price}
+
+
+def _high_low_extremes(
+    candles: dict[date, _Candle],
+    offset_dates: Sequence[date],
+    scan_ltp: Any,
+    direction: str,
+) -> dict[str, Any]:
+    """Highest high and lowest low over the first four forward sessions.
+
+    A LONG's best exit is the highest high; a SHORT's is the lowest low. The
+    same two prices are the other side's worst point, so a row can show both
+    "best long" and "best short" days and whether the stock's own direction was
+    profitable at its favourable extreme.
+    """
+
+    considered = list(offset_dates[:HIGH_LOW_WINDOW])
+    best_high: Decimal | None = None
+    best_low: Decimal | None = None
+    high_index: int | None = None
+    low_index: int | None = None
+    for index, trade_date in enumerate(considered):
+        candle = candles.get(trade_date)
+        if candle is None:
+            continue
+        if best_high is None or candle.high > best_high:
+            best_high, high_index = candle.high, index
+        if best_low is None or candle.low < best_low:
+            best_low, low_index = candle.low, index
+
+    actual = str(direction or "").upper()
+    best_long_pct = _return_pct(scan_ltp, best_high, 1)
+    best_short_pct = _return_pct(scan_ltp, best_low, -1)
+    if actual == Direction.LONG.value:
+        favourable_role = "long"
+        favourable_pct = best_long_pct
+        adverse_pct = _return_pct(scan_ltp, best_low, 1)
+    else:
+        favourable_role = "short"
+        favourable_pct = best_short_pct
+        adverse_pct = _return_pct(scan_ltp, best_high, -1)
+
+    return {
+        "window": len(considered),
+        "highest": _extreme(high_index, considered, best_high),
+        "lowest": _extreme(low_index, considered, best_low),
+        "best_long_return_pct": best_long_pct,
+        "best_short_return_pct": best_short_pct,
+        "actual_direction": actual,
+        "favourable_role": favourable_role,
+        "favourable_return_pct": favourable_pct,
+        "adverse_return_pct": adverse_pct,
+        "favourable": None if favourable_pct is None else favourable_pct > 0,
+    }
 
 
 def _offset_stats(
@@ -320,7 +403,10 @@ def build_report(
             if not candles:
                 missing_symbols.add(provider_symbol)
             sign = _direction_sign(candidate.direction)
-            closes = [candles.get(trade_date) for trade_date in offset_dates]
+            offset_candles = [candles.get(trade_date) for trade_date in offset_dates]
+            closes = [candle.close if candle else None for candle in offset_candles]
+            highs = [candle.high if candle else None for candle in offset_candles]
+            lows = [candle.low if candle else None for candle in offset_candles]
             returns = [
                 _return_pct(candidate.scan_ltp, close, sign) for close in closes
             ]
@@ -348,7 +434,15 @@ def build_report(
                         "candidate_status": candidate.status,
                         "coverage": _symbol_coverage(candles, offset_dates),
                         "closes": closes,
+                        "highs": highs,
+                        "lows": lows,
                         "returns_pct": returns,
+                        "high_low": _high_low_extremes(
+                            candles,
+                            offset_dates,
+                            candidate.scan_ltp,
+                            candidate.direction,
+                        ),
                     }
                 )
 
@@ -402,6 +496,7 @@ __all__ = [
     "COVERAGE_NO_DATA",
     "COVERAGE_PARTIAL",
     "COVERAGE_PENDING",
+    "HIGH_LOW_WINDOW",
     "STATUS_FILTERS",
     "STATUS_FILTER_ALL",
     "STATUS_FILTER_APPROVED",

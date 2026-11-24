@@ -40,7 +40,7 @@ def _candidate(
         symbol=symbol,
         direction=direction,
         scan_ltp=Decimal(str(scan_ltp)),
-        score=Decimal("10"),
+        score=Decimal(10),
         grade="A",
         reason="",
         confirmation_count=1,
@@ -61,6 +61,32 @@ def _candle(db, symbol: str, day: date, close: float) -> None:
             open=Decimal(str(close)),
             high=Decimal(str(close)),
             low=Decimal(str(close)),
+            close=Decimal(str(close)),
+            volume=1000,
+            source="FYERS",
+        )
+    )
+
+
+def _ohlc(
+    db,
+    symbol: str,
+    day: date,
+    *,
+    high: float,
+    low: float,
+    close: float | None = None,
+    open_: float | None = None,
+) -> None:
+    close = high if close is None else close
+    open_ = close if open_ is None else open_
+    db.add(
+        InstrumentCandle(
+            symbol=symbol,
+            trade_date=day,
+            open=Decimal(str(open_)),
+            high=Decimal(str(high)),
+            low=Decimal(str(low)),
             close=Decimal(str(close)),
             volume=1000,
             source="FYERS",
@@ -489,3 +515,133 @@ def test_forward_days_bounds_are_validated(client, admin_headers):
         headers=admin_headers,
     )
     assert response.status_code in {400, 422}
+
+
+def test_high_low_extremes_use_intraday_highs_and_lows(db_session):
+    db = db_session
+    scan = _scan(db)
+    _candidate(
+        db,
+        scan,
+        symbol="INFY",
+        direction="LONG",
+        scan_ltp=100,
+        scanned_at=_dt(date(2026, 11, 10)),
+    )
+    sessions = [
+        date(2026, 11, 11),
+        date(2026, 11, 12),
+        date(2026, 11, 13),
+        date(2026, 11, 14),
+    ]
+    _benchmark(db, sessions)
+    _ohlc(db, "NSE:INFY-EQ", sessions[0], high=108, low=96, close=102)
+    _ohlc(db, "NSE:INFY-EQ", sessions[1], high=112, low=99, close=105)
+    _ohlc(db, "NSE:INFY-EQ", sessions[2], high=104, low=90, close=95)
+    _ohlc(db, "NSE:INFY-EQ", sessions[3], high=101, low=92, close=100)
+    db.commit()
+
+    report = performance_service.build_report(
+        db,
+        date_from=date(2026, 11, 10),
+        date_to=date(2026, 11, 10),
+        forward_days=4,
+        now=_dt(date(2026, 11, 15), 20),
+    )
+    row = report["days"][0]["symbols"][0]
+    summary = row["high_low"]
+
+    assert summary["window"] == 4
+    assert summary["highest"] == {
+        "offset": 2,
+        "trade_date": sessions[1],
+        "price": Decimal("112.0000"),
+    }
+    assert summary["lowest"] == {
+        "offset": 3,
+        "trade_date": sessions[2],
+        "price": Decimal("90.0000"),
+    }
+    # A LONG exits at the high; the low is its worst point.
+    assert summary["best_long_return_pct"] == 12.0
+    assert summary["best_short_return_pct"] == 10.0
+    assert summary["actual_direction"] == "LONG"
+    assert summary["favourable_role"] == "long"
+    assert summary["favourable_return_pct"] == 12.0
+    assert summary["adverse_return_pct"] == -10.0
+    assert summary["favourable"] is True
+    assert row["highs"][1] == Decimal("112.0000")
+    assert row["lows"][2] == Decimal("90.0000")
+
+
+def test_high_low_window_stops_at_d_plus_four_for_a_short(db_session):
+    db = db_session
+    scan = _scan(db)
+    _candidate(
+        db,
+        scan,
+        symbol="TCS",
+        direction="SHORT",
+        scan_ltp=200,
+        scanned_at=_dt(date(2026, 11, 10)),
+    )
+    sessions = [date(2026, 11, day) for day in (11, 12, 13, 14, 15)]
+    _benchmark(db, sessions)
+    _ohlc(db, "NSE:TCS-EQ", sessions[0], high=210, low=188, close=195)
+    _ohlc(db, "NSE:TCS-EQ", sessions[1], high=205, low=180, close=190)
+    _ohlc(db, "NSE:TCS-EQ", sessions[2], high=198, low=185, close=192)
+    _ohlc(db, "NSE:TCS-EQ", sessions[3], high=202, low=190, close=195)
+    # D+5 is outside the four-session window and must not win the extremes.
+    _ohlc(db, "NSE:TCS-EQ", sessions[4], high=260, low=150, close=200)
+    db.commit()
+
+    report = performance_service.build_report(
+        db,
+        date_from=date(2026, 11, 10),
+        date_to=date(2026, 11, 10),
+        forward_days=5,
+        now=_dt(date(2026, 11, 16), 20),
+    )
+    summary = report["days"][0]["symbols"][0]["high_low"]
+
+    assert summary["window"] == 4
+    assert summary["highest"]["offset"] == 1
+    assert float(summary["highest"]["price"]) == 210.0
+    assert summary["lowest"]["offset"] == 2
+    assert float(summary["lowest"]["price"]) == 180.0
+    # A SHORT exits at the low; the high is its worst point.
+    assert summary["best_long_return_pct"] == 5.0
+    assert summary["best_short_return_pct"] == 10.0
+    assert summary["favourable_role"] == "short"
+    assert summary["favourable_return_pct"] == 10.0
+    assert summary["adverse_return_pct"] == -5.0
+    assert summary["favourable"] is True
+
+
+def test_high_low_is_empty_when_the_stock_has_no_candles(db_session):
+    db = db_session
+    scan = _scan(db)
+    _candidate(
+        db,
+        scan,
+        symbol="NEWLIST",
+        direction="LONG",
+        scan_ltp=100,
+        scanned_at=_dt(date(2026, 11, 10)),
+    )
+    _benchmark(db, [date(2026, 11, 11)])
+    db.commit()
+
+    report = performance_service.build_report(
+        db,
+        date_from=date(2026, 11, 10),
+        date_to=date(2026, 11, 10),
+        forward_days=4,
+        now=_dt(date(2026, 11, 12), 20),
+    )
+    summary = report["days"][0]["symbols"][0]["high_low"]
+
+    assert summary["highest"] == {"offset": None, "trade_date": None, "price": None}
+    assert summary["lowest"] == {"offset": None, "trade_date": None, "price": None}
+    assert summary["favourable"] is None
+    assert summary["favourable_return_pct"] is None

@@ -291,6 +291,31 @@ export interface PerformanceOffset {
   worst_return_pct: number | null;
 }
 
+export interface PerformanceExtreme {
+  /** 1-based forward session (D+n), only from the first four sessions. */
+  offset: number | null;
+  trade_date: string | null;
+  price: string | null;
+}
+
+export interface PerformanceHighLow {
+  /** How many forward sessions the extremes cover (at most 4). */
+  window: number;
+  /** Highest intraday high — the best exit for a long. */
+  highest: PerformanceExtreme;
+  /** Lowest intraday low — the best exit for a short. */
+  lowest: PerformanceExtreme;
+  best_long_return_pct: number | null;
+  best_short_return_pct: number | null;
+  actual_direction: "LONG" | "SHORT";
+  /** Which extreme matches the row's own direction. */
+  favourable_role: "long" | "short";
+  favourable_return_pct: number | null;
+  adverse_return_pct: number | null;
+  /** True when the favourable extreme still beat scan_ltp. */
+  favourable: boolean | null;
+}
+
 export interface PerformanceSymbol {
   candidate_id: string;
   scan_id: string;
@@ -305,8 +330,14 @@ export interface PerformanceSymbol {
   coverage: PerformanceCoverage;
   /** One close per forward session, aligned with the day's `offsets`. */
   closes: (string | null)[];
+  /** Intraday high per forward session, aligned with `closes`. */
+  highs: (string | null)[];
+  /** Intraday low per forward session, aligned with `closes`. */
+  lows: (string | null)[];
   /** Direction-adjusted % return per forward session. */
   returns_pct: (number | null)[];
+  /** Highest high / lowest low over D+1..D+4, and the direction fit. */
+  high_low?: PerformanceHighLow | null;
 }
 
 export interface PerformanceDay {

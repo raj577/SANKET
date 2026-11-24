@@ -51,6 +51,27 @@ Per day and offset the report also returns `n`, `avg_return_pct`,
 `worst_return_pct`. The "All days" totals pool every stock across every scan day
 per offset.
 
+### Intraday highest and lowest (D+1 … D+4)
+
+The return formula uses closes, but each stock row also carries an intraday
+extreme summary built from the candle cache's `high` and `low`:
+
+* `highest` — the **highest high** over the first four forward sessions, with
+  its D+n and price. This is the best possible exit for a **LONG**.
+* `lowest` — the **lowest low** over the same four sessions. This is the best
+  possible exit for a **SHORT**.
+* `best_long_return_pct` = `(highest - scan_ltp) / scan_ltp * 100`.
+* `best_short_return_pct` = `(scan_ltp - lowest) / scan_ltp * 100`.
+* `favourable_role` is `long` for a LONG row and `short` for a SHORT row;
+  `favourable_return_pct` is the matching best return and `adverse_return_pct`
+  is the other extreme (the worst point). `favourable` is true when the row's
+  own best point was still above `scan_ltp`.
+* `window` is how many sessions the summary covered, capped at 4 even when the
+  report shows more D+n columns.
+
+If the stock has no cached candles in the window, every extreme is `null`
+rather than zero.
+
 ### Which sessions count
 
 The trading calendar is derived from the benchmark index
@@ -157,7 +178,17 @@ Response shape (abridged):
       "symbols": [
         { "symbol": "DMART", "direction": "LONG", "scan_ltp": "3444.5000",
           "coverage": "COMPLETE", "closes": ["3450.0000", "..."],
-          "returns_pct": [1.2, 1.55, 1.9, 2.25, 2.6] }
+          "highs": ["3462.0000", "..."], "lows": ["3431.0000", "..."],
+          "returns_pct": [1.2, 1.55, 1.9, 2.25, 2.6],
+          "high_low": {
+            "window": 4,
+            "highest": { "offset": 3, "trade_date": "2026-11-13", "price": "3521.0000" },
+            "lowest":  { "offset": 1, "trade_date": "2026-11-11", "price": "3420.5000" },
+            "best_long_return_pct": 2.22, "best_short_return_pct": 0.7,
+            "actual_direction": "LONG", "favourable_role": "long",
+            "favourable_return_pct": 2.22, "adverse_return_pct": -0.7,
+            "favourable": true
+          } }
       ]
     }
   ],
@@ -185,8 +216,14 @@ Response shape (abridged):
   for each D+n column the average return, sample size and win rate. The
   *All days* row repeats the same three numbers for the whole selection.
 * Expanding a day lists every stock: direction, grade, score, scan LTP, the
-  close and direction-adjusted return for each session, plus a coverage badge
-  (`COMPLETE`, `PARTIAL`, `PENDING`, `NO_DATA`).
+  close and direction-adjusted return for each session (hover a D+n cell for
+  that session's intraday high/low), plus a coverage badge (`COMPLETE`,
+  `PARTIAL`, `PENDING`, `NO_DATA`).
+* Two more columns per stock summarise the intraday extremes over D+1…D+4:
+  **High · long** is the best exit for a long (`D+n · price · return`) and
+  **Low · short** is the best exit for a short. **Signal fit** applies the
+  stock's own direction to its favourable extreme — `LONG ✓ D+2` when the best
+  point still beat the scan price, `LONG ✗ D+2` when it did not.
 * *Refresh candle data* starts the backfill and polls the run, showing the same
   progress bar and per-symbol states as the pattern scanner.
 * Warnings are shown for symbols with no cached candles, days still waiting for

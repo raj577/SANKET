@@ -18,6 +18,36 @@ class PerformanceOffsetOut(BaseModel):
     worst_return_pct: float | None = None
 
 
+class PerformanceExtremeOut(BaseModel):
+    """One side of the intraday high/low summary."""
+
+    #: 1-based forward session (D+n), limited to the first four sessions.
+    offset: int | None = None
+    trade_date: date | None = None
+    price: Decimal | None = None
+
+
+class PerformanceHighLowOut(BaseModel):
+    """Highest high and lowest low over D+1..D+4 for one stock.
+
+    ``highest`` is the best exit for a LONG; ``lowest`` is the best exit for a
+    SHORT. The row's own direction decides which one is *favourable*, and
+    ``favourable`` is true when that extreme still beat ``scan_ltp``.
+    """
+
+    window: int = 0
+    highest: PerformanceExtremeOut
+    lowest: PerformanceExtremeOut
+    best_long_return_pct: float | None = None
+    best_short_return_pct: float | None = None
+    actual_direction: str
+    #: "long" or "short" — the extreme that matches ``actual_direction``.
+    favourable_role: str
+    favourable_return_pct: float | None = None
+    adverse_return_pct: float | None = None
+    favourable: bool | None = None
+
+
 class PerformanceSymbolOut(BaseModel):
     candidate_id: uuid.UUID
     scan_id: uuid.UUID
@@ -32,7 +62,10 @@ class PerformanceSymbolOut(BaseModel):
     #: COMPLETE | PARTIAL | PENDING | NO_DATA
     coverage: str
     closes: list[Decimal | None]
+    highs: list[Decimal | None] = []
+    lows: list[Decimal | None] = []
     returns_pct: list[float | None]
+    high_low: PerformanceHighLowOut | None = None
 
 
 class PerformanceDayOut(BaseModel):
@@ -121,6 +154,8 @@ __all__ = [
     "CandleBackfillSymbolOut",
     "PerformanceCacheOut",
     "PerformanceDayOut",
+    "PerformanceExtremeOut",
+    "PerformanceHighLowOut",
     "PerformanceOffsetOut",
     "PerformanceReportOut",
     "PerformanceSymbolOut",
