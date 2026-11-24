@@ -14,7 +14,7 @@ from app.core.timeutils import to_ist, utcnow
 from app.db.session import get_db
 from app.models.audit import AdminAuditLog
 from app.models.collector import CollectorToken
-from app.models.enums import CandidateStatus, ScanStatus, ScanType, SignalStatus
+from app.models.enums import AuditAction, CandidateStatus, ScanStatus, ScanType, SignalStatus
 from app.models.scan import PatternCandidate, ScanCandidate, ScanRun
 from app.models.signal import PublishedSignal
 from app.models.user import User
@@ -26,6 +26,11 @@ from app.schemas.admin import (
 )
 from app.schemas.auth import UserCreate, UserOut, UserUpdate
 from app.schemas.common import Page
+from app.schemas.performance import (
+    CandleBackfillOut,
+    CandleBackfillRequest,
+    PerformanceReportOut,
+)
 from app.schemas.scan import (
     ArchiveOut,
     CandidateDetailOut,
@@ -51,8 +56,10 @@ from app.schemas.signal import (
 from app.services import (
     audit_service,
     candidate_service,
+    candle_service,
     kotak_scan_service,
     pattern_scan_service,
+    performance_service,
     scan_service,
     settings_service,
     signal_service,
@@ -573,6 +580,88 @@ def signal_history(
 ) -> list[PricePointOut]:
     signal_service.get_signal(db, signal_id)
     return [PricePointOut.model_validate(row) for row in signal_service.history(db, signal_id, limit=limit)]
+
+
+# ------------------------------------------------------------------------ performance
+
+
+@router.get("/performance", response_model=PerformanceReportOut)
+def performance_report(
+    date_from: date | None = None,
+    date_to: date | None = None,
+    forward_days: int | None = Query(default=None, ge=1, le=30),
+    status: str = Query(default="all", pattern="^(all|approved|not_approved)$"),
+    include_symbols: bool = True,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Day-wise performance of the OI scanner's filtered candidates.
+
+    ``status`` selects the stock set: every filtered candidate (``all``), only
+    the ones a reviewer approved or published (``approved``), or only the rest
+    (``not_approved``). Candles are never fetched here; the cache is read only.
+    """
+    default_from, default_to = performance_service.default_range(db)
+    return performance_service.build_report(
+        db,
+        date_from=date_from or default_from,
+        date_to=date_to or default_to,
+        forward_days=forward_days,
+        status_filter=status,
+        include_symbols=include_symbols,
+    )
+
+
+@router.post("/performance/backfill", response_model=CandleBackfillOut, status_code=202)
+def start_candle_backfill(
+    payload: CandleBackfillRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+) -> dict:
+    """Fetch and cache daily candles for the filtered symbols of a window."""
+
+    default_from, default_to = performance_service.default_range(db)
+    start = payload.date_from or default_from
+    end = payload.date_to or default_to
+    forward = performance_service.resolve_forward_days(payload.forward_days)
+    refresh_from, refresh_end = performance_service.refresh_window(start, end, forward)
+    symbols = payload.symbols or performance_service.symbols_for_range(db, start, end)
+
+    job = candle_service.create_backfill(
+        db, date_from=refresh_from, date_to=refresh_end, symbols=symbols
+    )
+    normalized = [
+        entry["symbol"] for entry in (job.progress or {}).get("symbols", [])
+    ]
+    audit_service.record(
+        db,
+        action=AuditAction.PERFORMANCE_BACKFILL_STARTED.value,
+        entity_type="candle_backfill_run",
+        entity_id=str(job.id),
+        details={
+            "range_from": refresh_from.isoformat(),
+            "range_to": refresh_end.isoformat(),
+            "symbols": len(normalized),
+            "window_from": start.isoformat(),
+            "window_to": end.isoformat(),
+            "forward_days": forward,
+        },
+        user=user,
+    )
+    db.commit()
+    background_tasks.add_task(candle_service.run_backfill_job, job.id, normalized)
+    return candle_service.progress_out(job)
+
+
+@router.get("/performance/backfill/latest", response_model=CandleBackfillOut | None)
+def latest_candle_backfill(db: Session = Depends(get_db)) -> dict | None:
+    job = candle_service.latest_run(db)
+    return candle_service.progress_out(job) if job is not None else None
+
+
+@router.get("/performance/backfill/{run_id}", response_model=CandleBackfillOut)
+def get_candle_backfill(run_id: uuid.UUID, db: Session = Depends(get_db)) -> dict:
+    return candle_service.progress_out(candle_service.get_run(db, run_id))
 
 
 # ------------------------------------------------------------------------------- users

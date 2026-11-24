@@ -21,6 +21,7 @@ from app.db.session import get_sessionmaker
 from app.market_data.fyers_client import FyersClient, FyersError
 from app.market_data.kotak_client import KotakError
 from app.market_data.price_tracker import apply_price_tick
+from app.market_data.symbols import identity_symbol, to_fyers_symbol
 from app.models.enums import SignalStatus
 from app.models.signal import PublishedSignal
 from app.services import settings_service
@@ -28,26 +29,7 @@ from app.services.ws_manager import broadcast_signal_event, hub
 
 logger = get_logger(__name__)
 
-INDEX_SYMBOLS = {
-    "NIFTY": "NSE:NIFTY50-INDEX",
-    "BANKNIFTY": "NSE:NIFTYBANK-INDEX",
-    "FINNIFTY": "NSE:FINNIFTY-INDEX",
-    "MIDCPNIFTY": "NSE:NIFTYMIDCAP150-INDEX",
-}
-
 QUOTE_CHUNK_SIZE = 50
-
-
-def to_fyers_symbol(symbol: str) -> str:
-    name = symbol.strip().upper()
-    if name in INDEX_SYMBOLS:
-        return INDEX_SYMBOLS[name]
-    return f"NSE:{name}-EQ"
-
-
-def identity_symbol(symbol: str) -> str:
-    """Kotak quotes use the plain NSE symbol, not a ``NSE:...`` string."""
-    return symbol.strip().upper()
 
 
 def make_client(provider: str):

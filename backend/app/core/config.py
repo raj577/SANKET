@@ -107,6 +107,20 @@ class Settings(BaseSettings):
     pattern_instrument_master_url: str = "https://public.fyers.in/sym_details/NSE_FO.csv"
     pattern_instrument_cache_ttl_seconds: int = 3600
 
+    # --- Day-wise performance analysis -----------------------------------
+    # Daily spot candles are cached in ``instrument_candles`` so reading the
+    # report never calls FYERS. Backfills are paced for the Standard plan's
+    # 50 history requests/minute limit, exactly like the pattern scanner.
+    performance_forward_days: int = 5
+    performance_max_forward_days: int = 10
+    performance_default_lookback_days: int = 30
+    performance_history_pause_seconds: float = 1.3
+    performance_history_chunk_days: int = 120
+    performance_rate_limit_backoff_seconds: float = 60.0
+    performance_max_symbols_per_run: int = 400
+    performance_benchmark_symbol: str = "NSE:NIFTY50-INDEX"
+    performance_stale_run_minutes: int = 30
+
     # --- Market data provider --------------------------------------------
     market_data_provider: str = "fyers"  # "fyers" | "kotak"
     market_data_transport: str = "websocket"  # "websocket" | "rest"

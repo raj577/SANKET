@@ -20,6 +20,7 @@ from typing import Any, Callable, Iterable
 import httpx
 import pandas as pd
 
+from app.market_data.errors import is_auth_error, is_rate_limit_error
 from app.market_data.fyers_client import FyersClient, FyersError
 
 from .candles import (
@@ -81,29 +82,9 @@ class InstrumentMasterError(RuntimeError):
     """Raised when the futures universe cannot be loaded or validated."""
 
 
-def _is_auth_error(exc: BaseException) -> bool:
-    text = str(exc).lower()
-    return any(
-        part in text
-        for part in (
-            "access token",
-            "invalid token",
-            "token expired",
-            "token has expired",
-            "unauthor",
-            "authenticate",
-            "authentication",
-            "invalid client",
-            "please login",
-            "session expired",
-        )
-    )
-
-
-def _is_rate_limit_error(exc: BaseException) -> bool:
-    """Detect FYERS' per-minute plan limit, whatever shape the error takes."""
-    text = str(exc).lower()
-    return "429" in text or "rate limit" in text or "requests/minute" in text
+# Kept as module-level aliases so existing call sites and tests stay valid.
+_is_auth_error = is_auth_error
+_is_rate_limit_error = is_rate_limit_error
 
 
 class PatternHistoryService:

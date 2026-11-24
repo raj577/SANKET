@@ -176,7 +176,7 @@ def _fyers_timestamp(expiry: str | None) -> str | int:
 
 
 def _fyers_symbol(symbol: str) -> str:
-    from app.workers.price_tracker_worker import to_fyers_symbol
+    from app.market_data.symbols import to_fyers_symbol
 
     return to_fyers_symbol(symbol)
 

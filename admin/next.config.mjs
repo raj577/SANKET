@@ -10,6 +10,13 @@ const nextConfig = {
   output: "standalone",
   reactStrictMode: true,
   poweredByHeader: false,
+  experimental: {
+    // Next 16 exposes a dev-only MCP endpoint by default. It appends every
+    // compile and browser log line to .next/dev/logs/next-development.log,
+    // which this project does not read. Keep the dev server from writing that
+    // file on every request.
+    mcpServer: false,
+  },
   async headers() {
     return [{ source: "/(.*)", headers: securityHeaders }];
   }

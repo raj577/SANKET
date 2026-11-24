@@ -262,3 +262,101 @@ export interface FyersStatus {
   market_data_configured: boolean;
   stream_ready: boolean;
 }
+
+/** Day-wise performance of the OI scanner's filtered candidates. */
+
+export type PerformanceCoverage = "COMPLETE" | "PARTIAL" | "PENDING" | "NO_DATA";
+
+export interface PerformanceOffset {
+  offset: number;
+  trade_date: string | null;
+  n: number;
+  avg_return_pct: number | null;
+  win_rate_pct: number | null;
+  best_return_pct: number | null;
+  worst_return_pct: number | null;
+}
+
+export interface PerformanceSymbol {
+  candidate_id: string;
+  scan_id: string;
+  symbol: string;
+  provider_symbol: string;
+  direction: "LONG" | "SHORT";
+  grade: string;
+  score: string;
+  scan_ltp: string;
+  scanned_at: string;
+  candidate_status: string;
+  coverage: PerformanceCoverage;
+  /** One close per forward session, aligned with the day's `offsets`. */
+  closes: (string | null)[];
+  /** Direction-adjusted % return per forward session. */
+  returns_pct: (number | null)[];
+}
+
+export interface PerformanceDay {
+  day: string;
+  scans: number;
+  filtered: number;
+  long_count: number;
+  short_count: number;
+  duplicates_collapsed: number;
+  /** True when candles exist but no completed session follows this scan day. */
+  pending: boolean;
+  offsets: PerformanceOffset[];
+  symbols: PerformanceSymbol[];
+}
+
+export interface PerformanceReport {
+  date_from: string;
+  date_to: string;
+  forward_days: number;
+  /** Which stock set the numbers describe. */
+  status_filter: "all" | "approved" | "not_approved";
+  benchmark_symbol: string;
+  generated_at: string;
+  days: PerformanceDay[];
+  totals: {
+    filtered: number;
+    scan_days: number;
+    offsets: PerformanceOffset[];
+  };
+  cache: {
+    data_from: string | null;
+    data_to: string | null;
+    candles: number;
+    symbols: number;
+    last_fetched_at: string | null;
+  };
+  missing_symbols: string[];
+  pending_days: number;
+}
+
+export interface CandleBackfillSymbol {
+  symbol: string;
+  state: "PENDING" | "FETCHING" | "FETCHED" | "NO_DATA" | "ERROR" | "SKIPPED";
+  candles: number;
+  message: string | null;
+}
+
+export interface CandleBackfill {
+  run_id: string;
+  status: "PENDING" | "RUNNING" | "COMPLETED" | "PARTIAL" | "FAILED";
+  state: "queued" | "running" | "finished";
+  range_from: string;
+  range_to: string;
+  started_at: string;
+  completed_at: string | null;
+  total_symbols: number;
+  processed_symbols: number;
+  failed_symbols: number;
+  candles_written: number;
+  percent: number;
+  fetched: number;
+  no_data: number;
+  pending: number;
+  current: string | null;
+  error_message: string | null;
+  symbols: CandleBackfillSymbol[];
+}
