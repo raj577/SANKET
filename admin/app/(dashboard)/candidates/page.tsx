@@ -6,9 +6,54 @@ import { Badge, Card, Empty, ErrorText, Field, Modal, Pagination, Spinner } from
 import { api, buildQuery } from "@/lib/api";
 import { formatDateTime, num, toneForStatus } from "@/lib/format";
 import { useApiData } from "@/lib/use-api-data";
-import type { Candidate, Page, Scan, Signal } from "@/lib/types";
+import type { Candidate, CandidateHistory, Page, Scan, Signal } from "@/lib/types";
 
 const PAGE_SIZE = 25;
+
+const REPEAT_CHOICES: { value: string; label: string; title: string; note: string }[] = [
+  { value: "", label: "Any history", title: "No repeat filter", note: "" },
+  {
+    value: "last_2_scans",
+    label: "In last 2 scans",
+    title: "The stock also passed the scan run right before this row's scan",
+    note: "Showing stocks that also passed the scan immediately before their own. Two scans on the same day count; the previous scan is the closest earlier scan run."
+  },
+  {
+    value: "last_2_days",
+    label: "In last 2 scan days",
+    title: "The stock also passed a scan on either of the two previous scan days",
+    note: "Showing stocks that also passed a scan on either of the two previous scan days (the two most recent earlier dates that had an OI scan)."
+  },
+  {
+    value: "short_to_long",
+    label: "SHORT → LONG",
+    title: "Was SHORT on the previous scan days and is LONG now",
+    note: "Showing LONG rows whose latest direction on the two previous scan days was SHORT."
+  }
+];
+
+const REPEAT_NOTES = Object.fromEntries(
+  REPEAT_CHOICES.filter((choice) => choice.note).map((choice) => [choice.value, choice.note])
+);
+
+function HistoryCell({ history }: { history?: CandidateHistory | null }) {
+  if (!history) return <span className="muted small">—</span>;
+  const parts: string[] = [];
+  if (history.short_to_long) parts.push("was SHORT on the previous scan days");
+  if (history.in_previous_scan) parts.push("also in the previous scan");
+  if (history.in_last_2_days) parts.push("also on one of the 2 previous scan days");
+  if (!parts.length) return <span className="muted small">—</span>;
+  const seen = history.previous_seen_at
+    ? ` Last seen ${formatDateTime(history.previous_seen_at)}.`
+    : "";
+  return (
+    <div className="flex" title={`${parts.join("; ")}.${seen}`.trim()}>
+      {history.short_to_long ? <Badge tone="amber">SHORT → LONG</Badge> : null}
+      {history.in_previous_scan ? <Badge tone="blue">2 scans</Badge> : null}
+      {history.in_last_2_days ? <Badge tone="blue">2 days</Badge> : null}
+    </div>
+  );
+}
 
 export default function CandidatesPage() {
   const [scanId, setScanId] = useState("");
@@ -16,6 +61,7 @@ export default function CandidatesPage() {
   const [status, setStatus] = useState("PENDING");
   const [grade, setGrade] = useState("");
   const [symbol, setSymbol] = useState("");
+  const [repeat, setRepeat] = useState("");
   const [page, setPage] = useState(1);
 
   const [actionError, setActionError] = useState<string | null>(null);
@@ -41,7 +87,8 @@ export default function CandidatesPage() {
     direction,
     status,
     grade,
-    symbol
+    symbol,
+    repeat
   })}`;
   const { data, loading, error, reload } = useApiData<Page<Candidate>>(path);
 
@@ -164,7 +211,22 @@ export default function CandidatesPage() {
           <Field label="Symbol" hint="Contains">
             <input value={symbol} onChange={(event) => { setSymbol(event.target.value.toUpperCase()); resetPage(); }} placeholder="WIPRO" />
           </Field>
+          <Field label="Repeats" hint="Across scans">
+            <select
+              value={repeat}
+              onChange={(event) => { setRepeat(event.target.value); resetPage(); }}
+              title={REPEAT_CHOICES.find((choice) => choice.value === repeat)?.title}
+            >
+              {REPEAT_CHOICES.map((choice) => (
+                <option key={choice.value || "any"} value={choice.value}>{choice.label}</option>
+              ))}
+            </select>
+          </Field>
         </div>
+
+        {REPEAT_NOTES[repeat] ? (
+          <p className="muted small" style={{ margin: "-4px 0 12px" }}>{REPEAT_NOTES[repeat]}</p>
+        ) : null}
 
         <ErrorText error={error || actionError} />
 
@@ -178,6 +240,7 @@ export default function CandidatesPage() {
                   <tr>
                     <th>Symbol</th>
                     <th>Direction</th>
+                    <th>History</th>
                     <th>Grade</th>
                     <th className="right">Score</th>
                     <th className="right">Scan LTP</th>
@@ -196,6 +259,7 @@ export default function CandidatesPage() {
                           {candidate.direction}
                         </Badge>
                       </td>
+                      <td><HistoryCell history={candidate.history} /></td>
                       <td><Badge tone={candidate.grade.startsWith("A") ? "green" : "blue"}>{candidate.grade}</Badge></td>
                       <td className="right">{num(candidate.score, 0)}</td>
                       <td className="right">{num(candidate.scan_ltp)}</td>

@@ -4,7 +4,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from app.schemas.common import ORMModel
 
@@ -148,6 +148,16 @@ class CandidateRejectRequest(ORMModel):
     reason: str | None = Field(default=None, max_length=1000)
 
 
+class CandidateHistoryOut(BaseModel):
+    """How a candidate relates to the scans that came before its own."""
+
+    in_previous_scan: bool = False
+    in_last_2_days: bool = False
+    previous_direction: str | None = None
+    short_to_long: bool = False
+    previous_seen_at: datetime | None = None
+
+
 class CandidateOut(ORMModel):
     id: uuid.UUID
     scan_id: uuid.UUID
@@ -161,6 +171,8 @@ class CandidateOut(ORMModel):
     scanned_at: datetime
     status: str
     created_at: datetime
+    #: Filled by the list/detail endpoints; other responses leave it null.
+    history: CandidateHistoryOut | None = None
 
 
 class CandidateDetailOut(CandidateOut):

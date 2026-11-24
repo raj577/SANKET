@@ -123,6 +123,19 @@ export interface PatternSummary {
   classification_counts: Record<string, number>;
 }
 
+export interface CandidateHistory {
+  /** The stock also passed the scan run immediately before this row's scan. */
+  in_previous_scan: boolean;
+  /** The stock passed a scan on one of the two previous scan days. */
+  in_last_2_days: boolean;
+  /** Latest direction on those two previous scan days, when unambiguous. */
+  previous_direction: "LONG" | "SHORT" | null;
+  /** The two previous scan days ended SHORT and this row is LONG. */
+  short_to_long: boolean;
+  /** Most recent earlier scan that contained the stock. */
+  previous_seen_at: string | null;
+}
+
 export interface Candidate {
   id: string;
   scan_id: string;
@@ -136,6 +149,7 @@ export interface Candidate {
   scanned_at: string;
   status: "PENDING" | "APPROVED" | "REJECTED" | "PUBLISHED" | "EXPIRED";
   created_at: string;
+  history?: CandidateHistory | null;
 }
 
 export interface Signal {

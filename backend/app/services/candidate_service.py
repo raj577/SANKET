@@ -10,7 +10,7 @@ from app.core.exceptions import ConflictError, NotFoundError
 from app.models.enums import AuditAction, CandidateStatus
 from app.models.scan import ScanCandidate
 from app.models.user import User
-from app.services import audit_service
+from app.services import audit_service, candidate_history_service
 
 
 def get_candidate(db: Session, candidate_id: uuid.UUID) -> ScanCandidate:
@@ -28,6 +28,7 @@ def list_candidates(
     status: str | None = None,
     grade: str | None = None,
     symbol: str | None = None,
+    repeat: str | None = None,
     offset: int = 0,
     limit: int = 50,
 ) -> tuple[list[ScanCandidate], int]:
@@ -47,13 +48,43 @@ def list_candidates(
     for condition in conditions:
         stmt = stmt.where(condition)
         count_stmt = count_stmt.where(condition)
-    total = db.scalar(count_stmt) or 0
-    rows = db.scalars(
-        stmt.order_by(ScanCandidate.score.desc(), ScanCandidate.symbol.asc())
-        .offset(offset)
-        .limit(limit)
+
+    chosen_repeat = candidate_history_service.resolve_repeat_filter(repeat)
+    if chosen_repeat is None:
+        total = db.scalar(count_stmt) or 0
+        rows = db.scalars(
+            stmt.order_by(ScanCandidate.score.desc(), ScanCandidate.symbol.asc())
+            .offset(offset)
+            .limit(limit)
+        ).all()
+        return list(rows), int(total)
+
+    # Repeat flags depend on the other scans of each symbol, which SQL cannot
+    # express cheaply across both SQLite and Postgres. Keep the expensive part
+    # to lean columns, filter in Python, then load only the rows on this page.
+    lean = db.execute(
+        select(
+            ScanCandidate.id,
+            ScanCandidate.scan_id,
+            ScanCandidate.symbol,
+            ScanCandidate.direction,
+        )
+        .where(*conditions)
+        .order_by(ScanCandidate.score.desc(), ScanCandidate.symbol.asc())
     ).all()
-    return list(rows), int(total)
+    histories = candidate_history_service.history_map(db, lean)
+    wanted = [
+        row.id
+        for row in lean
+        if candidate_history_service.matches(histories[row.id], chosen_repeat)
+    ]
+    total = len(wanted)
+    page_ids = wanted[offset : offset + limit]
+    if not page_ids:
+        return [], total
+    rows = db.scalars(select(ScanCandidate).where(ScanCandidate.id.in_(page_ids))).all()
+    rank = {candidate_id: index for index, candidate_id in enumerate(page_ids)}
+    return sorted(rows, key=lambda row: rank[row.id]), total
 
 
 def approve(db: Session, candidate_id: uuid.UUID, user: User) -> ScanCandidate:

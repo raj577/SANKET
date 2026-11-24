@@ -34,6 +34,7 @@ from app.schemas.performance import (
 from app.schemas.scan import (
     ArchiveOut,
     CandidateDetailOut,
+    CandidateHistoryOut,
     CandidateOut,
     CandidateRejectRequest,
     KotakScanRequest,
@@ -55,6 +56,7 @@ from app.schemas.signal import (
 )
 from app.services import (
     audit_service,
+    candidate_history_service,
     candidate_service,
     candle_service,
     kotak_scan_service,
@@ -353,6 +355,9 @@ def list_candidates(
     status: str | None = None,
     grade: str | None = None,
     symbol: str | None = None,
+    repeat: str | None = Query(
+        default=None, pattern="^(last_2_scans|last_2_days|short_to_long)$"
+    ),
     db: Session = Depends(get_db),
 ) -> dict:
     rows, total = candidate_service.list_candidates(
@@ -362,16 +367,26 @@ def list_candidates(
         status=status,
         grade=grade,
         symbol=symbol,
+        repeat=repeat,
         offset=(page - 1) * page_size,
         limit=page_size,
     )
-    return _page([CandidateOut.model_validate(row) for row in rows], total, page, page_size)
+    histories = candidate_history_service.history_map(db, rows)
+    items = []
+    for row in rows:
+        out = CandidateOut.model_validate(row)
+        found = histories.get(row.id)
+        out.history = CandidateHistoryOut.model_validate(found) if found else None
+        items.append(out)
+    return _page(items, total, page, page_size)
 
 
 @router.get("/candidates/{candidate_id}", response_model=CandidateDetailOut)
 def get_candidate(candidate_id: uuid.UUID, db: Session = Depends(get_db)) -> CandidateDetailOut:
     candidate = candidate_service.get_candidate(db, candidate_id)
     out = CandidateDetailOut.model_validate(candidate)
+    found = candidate_history_service.history_map(db, [candidate]).get(candidate.id)
+    out.history = CandidateHistoryOut.model_validate(found) if found else None
     signal = signal_service.get_signal_by_candidate(db, candidate.id)
     out.signal_id = signal.id if signal else None
     out.scan_status = candidate.scan.status if candidate.scan else None
