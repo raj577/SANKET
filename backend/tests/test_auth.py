@@ -26,7 +26,7 @@ def test_invalid_password_is_rejected(client):
     assert response.status_code == 401
 
 
-def test_refresh_token_rotates_and_old_token_is_revoked(client):
+def test_refresh_token_rotates_on_each_use(client):
     login = client.post(
         f"{API}/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD}
     ).json()
@@ -36,11 +36,67 @@ def test_refresh_token_rotates_and_old_token_is_revoked(client):
     assert rotated.status_code == 200
     assert rotated.json()["refresh_token"] != first_refresh
 
+    second = client.post(
+        f"{API}/auth/refresh", json={"refresh_token": rotated.json()["refresh_token"]}
+    )
+    assert second.status_code == 200
+    assert second.json()["refresh_token"] not in {
+        first_refresh,
+        rotated.json()["refresh_token"],
+    }
+
+
+def test_concurrent_refresh_of_same_token_keeps_session_alive(client):
+    login = client.post(
+        f"{API}/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD}
+    ).json()
+
+    # Two requests racing to refresh the same cookie must both succeed.
+    first = client.post(f"{API}/auth/refresh", json={"refresh_token": login["refresh_token"]})
+    second = client.post(f"{API}/auth/refresh", json={"refresh_token": login["refresh_token"]})
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["refresh_token"] != second.json()["refresh_token"]
+
+    for pair in (first.json(), second.json()):
+        me = client.get(
+            f"{API}/auth/me", headers={"Authorization": f"Bearer {pair['access_token']}"}
+        )
+        assert me.status_code == 200
+
+    # The raced-again token still works: the race must not have revoked it.
+    third = client.post(
+        f"{API}/auth/refresh", json={"refresh_token": second.json()["refresh_token"]}
+    )
+    assert third.status_code == 200
+
+
+def test_reusing_a_rotated_token_after_the_grace_window_revokes_the_family(
+    client, db_session
+):
+    from datetime import timedelta
+
+    from app.core.timeutils import utcnow
+    from app.models.user import RefreshToken
+
+    login = client.post(
+        f"{API}/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD}
+    ).json()
+    first_refresh = login["refresh_token"]
+
+    rotated = client.post(f"{API}/auth/refresh", json={"refresh_token": first_refresh})
+    assert rotated.status_code == 200
+
+    # Backdate the rotation beyond the race window: this is now plain reuse.
+    stored = db_session.query(RefreshToken).filter(RefreshToken.replaced_by.isnot(None)).one()
+    stored.revoked_at = utcnow() - timedelta(days=1)
+    db_session.commit()
+
     reused = client.post(f"{API}/auth/refresh", json={"refresh_token": first_refresh})
     assert reused.status_code == 401
 
     # Reuse is treated as token theft: the whole session family is revoked,
-    # including access tokens already issued.
+    # including access tokens already issued and the newest refresh token.
     after_reuse = client.post(
         f"{API}/auth/refresh", json={"refresh_token": rotated.json()["refresh_token"]}
     )

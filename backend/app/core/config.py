@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_minutes: int = 60
     refresh_token_days: int = 14
+    # Concurrent requests can legitimately present the same refresh token (two
+    # tabs, parallel API calls after the access token expires). A token rotated
+    # within this window is treated as a benign race instead of token theft.
+    refresh_race_grace_seconds: int = 60
     password_min_length: int = 8
 
     bootstrap_admin_email: str | None = None

@@ -60,16 +60,26 @@ def authenticate(db: Session, email: str, password: str) -> User:
 
 
 def rotate_refresh_token(db: Session, refresh_token: str) -> TokenPair:
-    decode_token(refresh_token, "refresh")
+    payload = decode_token(refresh_token, "refresh")
     digest = token_digest(refresh_token)
     stored = db.scalar(select(RefreshToken).where(RefreshToken.token_hash == digest))
     if stored is None:
         raise AuthError("Refresh token is not recognised")
     if stored.revoked_at is not None:
+        user = db.get(User, stored.user_id)
+        if user is not None and user.is_active and _is_rotation_race(stored, payload, user):
+            # A refresh token rotated moments ago and presented again is almost
+            # always a concurrent request (two tabs, or several API calls after
+            # the access token expired), not a stolen token. Issuing another
+            # pair keeps the racing caller signed in; revoking the whole family
+            # here would log the user out of every browser. The original
+            # revoked_at is left untouched so the grace window cannot be
+            # extended by replaying the token again.
+            return _issue_rotated_tokens(db, user)
+
         # Reuse of a rotated token is suspicious: revoke every active session
         # for this account so a stolen token cannot keep refreshing.
         now = utcnow()
-        user = db.get(User, stored.user_id)
         if user is not None:
             user.token_version = int(user.token_version or 0) + 1
         active = db.scalars(
@@ -89,12 +99,31 @@ def rotate_refresh_token(db: Session, refresh_token: str) -> TokenPair:
     if user is None or not user.is_active:
         raise AuthError("Account is disabled")
 
-    stored.revoked_at = utcnow()
+    return _issue_rotated_tokens(db, user, stored)
+
+
+def _is_rotation_race(stored: RefreshToken, payload: dict, user: User) -> bool:
+    """Whether this revoked token is a recent, legitimate rotation loser."""
+    if stored.replaced_by is None:
+        # Revoked by logout rather than rotation; never revive it.
+        return False
+    if int(payload.get("ver", 0)) != int(user.token_version or 0):
+        return False
+    grace = timedelta(seconds=get_settings().refresh_race_grace_seconds)
+    return utcnow() - ensure_aware(stored.revoked_at) <= grace
+
+
+def _issue_rotated_tokens(
+    db: Session, user: User, rotated: RefreshToken | None = None
+) -> TokenPair:
+    """Mint a new token pair, optionally retiring the token that was used."""
     version = int(user.token_version or 0)
     access = create_access_token(str(user.id), user.role, version)
     new_refresh = create_refresh_token(str(user.id), user.role, version)
-    new_payload = decode_token(new_refresh, "refresh")
-    stored.replaced_by = new_payload.get("jti")
+    new_jti = decode_token(new_refresh, "refresh").get("jti")
+    if rotated is not None:
+        rotated.revoked_at = utcnow()
+        rotated.replaced_by = new_jti
     _store_refresh(db, user, new_refresh)
     db.commit()
     return TokenPair(access_token=access, refresh_token=new_refresh)
